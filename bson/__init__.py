@@ -434,16 +434,29 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
                           type(value))
 
 
-def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True):
+# Contrary to the C implementation, the Python
+# implementation of :func:`_dict_to_bson` does not check
+# `document` for an explicit dict type and accepts any
+# object that implements key access and :meth:`iteritems`.
+#
+# Although this is really the better behavior, this check makes
+# sure, that both implementations act identically.
+dict_to_bson_ensure_c_compat = True
+
+def _dict_to_bson(dct, check_keys, uuid_subtype, top_level=True):
+    if dict_to_bson_ensure_c_compat and not isinstance(dct, dict):
+        # ensure that test_arbitrary_mapping_encode passes
+        raise TypeError("encoder expected a mapping type but got: %r" % dct)
+
     try:
         elements = []
-        if top_level and "_id" in dict:
-            elements.append(_element_to_bson("_id", dict["_id"], False, uuid_subtype))
-        for (key, value) in dict.iteritems():
+        if top_level and "_id" in dct:
+            elements.append(_element_to_bson("_id", dct["_id"], False, uuid_subtype))
+        for (key, value) in dct.iteritems():
             if not top_level or key != "_id":
                 elements.append(_element_to_bson(key, value, check_keys, uuid_subtype))
     except AttributeError:
-        raise TypeError("encoder expected a mapping type but got: %r" % dict)
+        raise TypeError("encoder expected a mapping type but got: %r" % dct)
 
     encoded = EMPTY.join(elements)
     length = len(encoded) + 5

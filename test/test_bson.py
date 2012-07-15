@@ -440,5 +440,35 @@ class TestBSON(unittest.TestCase):
         d = OrderedDict([("one", 1), ("two", 2), ("three", 3), ("four", 4)])
         self.assertEqual(d, BSON.encode(d).decode(as_class=OrderedDict))
 
+    def test_arbitrary_mapping_type(self):
+        class ArbitrayMapping(object):
+            def __init__(self):
+                self._arbitrary_mapping_dict_ = dict()
+            def __getattr__(self, attr):
+                try:
+                    return getattr(self._arbitrary_mapping_dict_, attr)
+                except AttributeError:
+                    return super(ArbitrayMapping, self).__getattribute__(attr)
+            def __iter__(self):
+                return self._arbitrary_mapping_dict_.__iter__()
+            def __getitem__(self, key):
+                return self._arbitrary_mapping_dict_.__getitem__(key)
+            def __setitem__(self, key, val):
+                return self._arbitrary_mapping_dict_.__setitem__(key, val)
+
+        if not bson.has_c():
+            sys.stderr.write('test_arbitrary_mapping_type: Python test')
+            bson.dict_to_bson_ensure_c_compat = False
+            am = ArbitrayMapping()
+            self.assertTrue(isinstance(BSON.encode(am).decode(), dict))
+            am['_id'] = 'FFFFFFFFFFFFFFFFFFFFFFFF'
+            self.assertTrue(isinstance(BSON.encode(am).decode(), dict))
+
+        bson.dict_to_bson_ensure_c_compat = True
+        am = ArbitrayMapping()
+        self.assertRaises(TypeError, BSON.encode, am)
+        am['_id'] = 'FFFFFFFFFFFFFFFFFFFFFFFF'
+        self.assertRaises(TypeError, BSON.encode, am)
+
 if __name__ == "__main__":
     unittest.main()
