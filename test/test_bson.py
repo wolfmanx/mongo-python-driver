@@ -33,6 +33,9 @@ import bson
 from bson import (BSON,
                   decode_all,
                   is_valid)
+from bson import (enable_c,
+                  enable_c_encoding,
+                  enable_c_decoding)
 from bson.binary import Binary, UUIDLegacy
 from bson.code import Code
 from bson.objectid import ObjectId
@@ -469,6 +472,77 @@ class TestBSON(unittest.TestCase):
         self.assertRaises(TypeError, BSON.encode, am)
         am['_id'] = 'FFFFFFFFFFFFFFFFFFFFFFFF'
         self.assertRaises(TypeError, BSON.encode, am)
+
+    def test_enable_c(self):
+        # Make sure that all possible combinations of C/Python encoding/decoding
+        # with or without system-wide available C extension work correctly.
+        for _function_category in bson._function_alternatives:
+            if not bson.has_c():
+                self.assertEqual(len(_function_category), 0)
+                continue
+            for _functions in _function_category:
+                self.assertTrue(repr(_functions[1]).startswith('<function'))
+                self.assertTrue(repr(_functions[2]).startswith('<built-in function'))
+
+        document = { 'a': 99 }
+
+        def check_c_state(self, encoding, decoding):
+
+            if not (encoding or decoding):
+                self.assertFalse(bson.is_c_enabled())
+                self.assertFalse(bson.is_c_enabled(False))
+                self.assertFalse(bson.is_c_enabled(True))
+            else:
+                self.assertTrue(bson.is_c_enabled())
+                self.assertTrue(bson.is_c_enabled(False))
+
+                if encoding:
+                    self.assertTrue(bson._use_c_encoding)
+                    self.assertTrue(repr(bson._dict_to_bson).startswith('<built-in function'))
+                else:
+                    self.assertFalse(bson._use_c_encoding)
+                    self.assertTrue(repr(bson._dict_to_bson).startswith('<function'))
+
+                if decoding:
+                    self.assertTrue(bson._use_c_decoding)
+                    self.assertTrue(repr(bson._bson_to_dict).startswith('<built-in function'))
+                    self.assertTrue(repr(bson._decode_all).startswith('<built-in function'))
+                else:
+                    self.assertFalse(bson._use_c_decoding)
+                    self.assertTrue(repr(bson._bson_to_dict).startswith('<function'))
+                    self.assertTrue(repr(bson._decode_all).startswith('<function'))
+
+                if encoding and decoding:
+                    self.assertTrue(bson.is_c_enabled(True))
+                else:
+                    self.assertFalse(bson.is_c_enabled(True))
+
+            # coverage:
+            # - C-encode,  C-decode
+            # - C-encode,  Py-decode
+            # - Py-encode, C-decode
+            # - Py-encode, Py-decode
+            self.assertEqual(99, bson.BSON.encode(document).decode(bson.SON)["a"])
+
+        self.assertFalse(enable_c(False))
+        check_c_state(self, False, False)
+
+        enabled = enable_c(True)
+        if not bson.has_c():
+            self.assertFalse(enabled)
+            check_c_state(self, False, False)
+        else:
+            self.assertTrue(enabled)
+            check_c_state(self, True, True)
+            enable_c(False)
+
+            self.assertTrue(enable_c_encoding(True))
+            check_c_state(self, True, False)
+            self.assertFalse(enable_c_encoding(False))
+
+            self.assertTrue(enable_c_decoding(True))
+            check_c_state(self, False, True)
+            self.assertFalse(enable_c_decoding(False))
 
 if __name__ == "__main__":
     unittest.main()
