@@ -33,15 +33,15 @@ typedef int Py_ssize_t;
 
 #define _cbson_write_dict_INDEX 1
 #define _cbson_write_dict_RETURN int
-#define _cbson_write_dict_PROTO (PyObject* self, buffer_t buffer, PyObject* dict, unsigned char check_keys, unsigned char uuid_subtype, unsigned char top_level)
+#define _cbson_write_dict_PROTO (PyObject* self, buffer_t buffer, PyObject* dict, unsigned char check_keys, unsigned char uuid_subtype, unsigned char top_level, PyObject* get_element_state)
 
 #define _cbson_write_pair_INDEX 2
 #define _cbson_write_pair_RETURN int
-#define _cbson_write_pair_PROTO (PyObject* self, buffer_t buffer, const char* name, Py_ssize_t name_length, PyObject* value, unsigned char check_keys, unsigned char uuid_subtype, unsigned char allow_id)
+#define _cbson_write_pair_PROTO (PyObject* self, buffer_t buffer, const char* name, Py_ssize_t name_length, PyObject* value, unsigned char check_keys, unsigned char uuid_subtype, unsigned char allow_id, PyObject* get_element_state)
 
 #define _cbson_decode_and_write_pair_INDEX 3
 #define _cbson_decode_and_write_pair_RETURN int
-#define _cbson_decode_and_write_pair_PROTO (PyObject* self, buffer_t buffer, PyObject* key, PyObject* value, unsigned char check_keys, unsigned char uuid_subtype, unsigned char top_level)
+#define _cbson_decode_and_write_pair_PROTO (PyObject* self, buffer_t buffer, PyObject* key, PyObject* value, unsigned char check_keys, unsigned char uuid_subtype, unsigned char top_level, PyObject *get_element_state)
 
 /* Total number of C API pointers */
 #define _cbson_API_POINTER_COUNT 4

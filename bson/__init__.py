@@ -35,6 +35,36 @@ from bson.son import SON
 from bson.timestamp import Timestamp
 from bson.tz_util import utc
 
+# |:sec:| Context Access Functions for _cbson
+# _cbson must have access to the following functions, when it imports bson.
+def default(value):
+    '''Yes, it is a terrible name :)
+
+    The C extension imports it as `get_element_state`.'''
+    return _ctx.get_element_state(value)
+
+def is_getstate_enabled():
+    return _ctx.enable_getstate
+
+def is_dict_enabled():
+    return _ctx.enable_dict
+
+def is_annotate_enabled():
+    return _ctx.enable_annotate
+
+def annotate_key():
+    return _ctx.annotate_key
+
+def is_wrap_enabled():
+    return _ctx.enable_wrap
+
+def wrap_class_key():
+    return _ctx.wrap_class_key
+
+def wrap_state_key():
+    return _ctx.wrap_state_key
+
+# |:sec:| End of Context Access Functions for _cbson
 
 try:
     from bson import _cbson
@@ -49,7 +79,6 @@ except ImportError:
     _use_uuid = False
 
 PY3 = sys.version_info[0] == 3
-
 
 # This sort of sucks, but seems to be as good as it gets...
 RE_TYPE = type(re.compile(""))
@@ -90,6 +119,169 @@ BSONLON = b("\x12") # 64bit int
 BSONMIN = b("\xFF") # Min key
 BSONMAX = b("\x7F") # Max key
 
+# |:sec:| Feature Context
+# Allow different threads to have independent configurations
+# E.g., enable/disable C extension independently
+import threading
+class _Ctx(object):
+    _attrib_ = list()
+
+    def __getstate__(self):
+        state = {}
+        for attr in self._attrib_:
+            state[attr] = getattr(self, attr)
+        return state
+
+    def __setstate__(self, state):
+        for attr, value in state.iteritems():
+            setattr(self, attr, value)
+
+class _CtxT(threading.local):
+    def __setstate__(self, state):
+        for attr, value in state.iteritems():
+            setattr(self, attr, value)
+
+    def __init__(self):
+        self.__setstate__(_global_ctx.__getstate__())
+
+    def setDefault(self, attr, value):
+        if attr not in _global_ctx._attrib_:
+            _global_ctx._attrib_.append(attr)
+        setattr(self, attr, value)
+        setattr(_global_ctx, attr, value)
+
+_global_ctx = _Ctx()
+_ctx = _global_ctx
+_thread_ctx = _CtxT()
+
+# |:sec:| Threading Support
+def enable_threading(on=True):
+    '''If threading is disabled once, it can no longer be enabled.'''
+    global _ctx, _can_enable_threading
+    if _can_enable_threading:
+        if on:
+            if not is_threading_enabled():
+                _ctx = _thread_ctx
+        else:
+            _ctx = _global_ctx
+            _can_enable_threading = False
+_can_enable_threading = True
+
+def is_threading_enabled():
+    return (_ctx == _thread_ctx)
+
+# |:sec:| Switch between C extension and pure Python
+if _use_c:
+    _thread_ctx.setDefault('_use_c_encoding', True)
+    _thread_ctx.setDefault('_use_c_decoding', True)
+else:
+    _thread_ctx.setDefault('_use_c_encoding', False)
+    _thread_ctx.setDefault('_use_c_decoding', False)
+
+_function_alternatives = [
+    [],                                 # encoding
+    [],                                 # decoding
+    ]
+
+def _register_encoding_alternative(name, python, c):
+    _function_alternatives[0].append((name, python, c))
+
+def _register_decoding_alternative(name, python, c):
+    _function_alternatives[1].append((name, python, c))
+
+def _enable_function_alternatives(alternatives, on=True):
+    '''Return False, for Python variants, True for C variants.'''
+    if on and not _use_c:
+        return False
+    indx = 2 if on else 1
+    for alternative in alternatives:
+        setattr(_ctx, alternative[0], alternative[indx])
+    return on
+
+def enable_c_encoding(on=True):
+    '''Enable/disable C extension for encoding.'''
+    _ctx._use_c_encoding = _enable_function_alternatives(_function_alternatives[0], on)
+    return _ctx._use_c_encoding
+
+def enable_c_decoding(on=None):
+    '''Enable/disable C extension for decoding.'''
+    _ctx._use_c_decoding = _enable_function_alternatives(_function_alternatives[1], on)
+    return _ctx._use_c_decoding
+
+def enable_c(on=True):
+    '''Enable/disable C extension for encoding/decoding.'''
+    enable_c_encoding(on)
+    enable_c_decoding(on)
+    return _ctx._use_c_encoding and _ctx._use_c_decoding
+
+# |:sec:| Default Callback to Get Element State
+# This function is called by :func:`default`.
+def _get_element_state(value):
+    raise InvalidDocument("cannot convert value of type %s to bson" %
+                          type(value))
+_thread_ctx.setDefault('get_element_state', _get_element_state)
+
+# |:sec:| Automatic Object Encoding Features
+def enable_getstate(on=True):
+    '''Enable/disable calling :meth:`__getstate__` for objects.'''
+    # Make sure, these are boolean values
+    _ctx.enable_getstate = (True if on else False)
+_thread_ctx.setDefault('enable_getstate', False)
+
+def enable_dict(on=True):
+    '''Enable/disable getting :attr:`__dict__` for objects.'''
+    _ctx.enable_dict = (True if on else False)
+_thread_ctx.setDefault('enable_dict', False)
+
+def enable_annotate(on=True):
+    '''Enable/disable annotation of automatic object state with class name.
+
+    When enabled, the state derived from :meth:`__getstate__` or
+    :attr:`__dict__` is annotated unconditionally with the class name.
+    The string returned by :func:`annotate_key()` is used as key.
+
+    The key name can be set with :func:`set_annotate_key`.
+
+    See also :func:`enable_getstate` and :func:`enable_dict`.
+    '''
+    _ctx.enable_annotate = (True if on else False)
+_thread_ctx.setDefault('enable_annotate', False)
+
+def set_annotate_key(key):
+    '''Set key name for :func:`annotate_key`.'''
+    _ctx.annotate_key = key
+_thread_ctx.setDefault('annotate_key', '_$class')
+
+def enable_wrap(on=True):
+    '''Enable/disable wrapping of automatic object state.
+
+    When enabled, the state derived from :meth:`__getstate__` or
+    :attr:`__dict__` is wrapped in a :class:`dict`.
+
+    The class name is assigned to the key returned by returned by
+    :func:`wrap_class_key()`.
+
+    The state is assigned to the key returned by returned by
+    :func:`wrap_state_key()`.
+
+    The key names can be set with :func:`set_wrap_class_key` and
+    :func:`set_wrap_state_key`.
+
+    See also :func:`enable_getstate` and :func:`enable_dict`.
+    '''
+    _ctx.enable_wrap = (True if on else False)
+_thread_ctx.setDefault('enable_wrap', False)
+
+def set_wrap_class_key(key):
+    '''Set key name for :func:`wrap_class_key`.'''
+    _ctx.wrap_class_key = key
+_thread_ctx.setDefault('wrap_class_key', '_$class')
+
+def set_wrap_state_key(key):
+    '''Set key name for :func:`wrap_state_key`.'''
+    _ctx.wrap_state_key = key
+_thread_ctx.setDefault('wrap_state_key', '_$state')
+# |:sec:| End of Features
 
 def _get_int(data, position, as_class=None, tz_aware=False, unsigned=False):
     format = unsigned and "I" or "i"
@@ -99,7 +291,6 @@ def _get_int(data, position, as_class=None, tz_aware=False, unsigned=False):
         raise InvalidBSON()
     position += 4
     return value, position
-
 
 def _get_c_string(data, position, length=None):
     if length is None:
@@ -114,9 +305,13 @@ def _get_c_string(data, position, length=None):
 
     return value, position
 
+try:
+    uc_type = unicode
+except NameError:
+    uc_type = str
 
 def _make_c_string(string, check_null=False):
-    if isinstance(string, unicode):
+    if isinstance(string, uc_type):
         if check_null and "\x00" in string:
             raise InvalidDocument("BSON keys / regex patterns must not "
                                   "contain a NULL character")
@@ -132,18 +327,15 @@ def _make_c_string(string, check_null=False):
             raise InvalidStringData("strings in documents must be valid "
                                     "UTF-8: %r" % string)
 
-
 def _get_number(data, position, as_class, tz_aware):
     num = struct.unpack("<d", data[position:position + 8])[0]
     position += 8
     return num, position
 
-
 def _get_string(data, position, as_class, tz_aware):
     length = struct.unpack("<i", data[position:position + 4])[0] - 1
     position += 4
     return _get_c_string(data, position, length)
-
 
 def _get_object(data, position, as_class, tz_aware):
     obj_size = struct.unpack("<i", data[position:position + 4])[0]
@@ -154,7 +346,6 @@ def _get_object(data, position, as_class, tz_aware):
         return (DBRef(object.pop("$ref"), object.pop("$id"),
                       object.pop("$db", None), object), position)
     return object, position
-
 
 def _get_array(data, position, as_class, tz_aware):
     obj, position = _get_object(data, position, as_class, tz_aware)
@@ -167,7 +358,6 @@ def _get_array(data, position, as_class, tz_aware):
         except KeyError:
             break
     return result, position
-
 
 def _get_binary(data, position, as_class, tz_aware):
     length, position = _get_int(data, position)
@@ -190,18 +380,15 @@ def _get_binary(data, position, as_class, tz_aware):
     position += length
     return value, position
 
-
 def _get_oid(data, position, as_class, tz_aware):
     value = ObjectId(data[position:position + 12])
     position += 12
     return value, position
 
-
 def _get_boolean(data, position, as_class, tz_aware):
     value = data[position:position + 1] == ONE
     position += 1
     return value, position
-
 
 def _get_date(data, position, as_class, tz_aware):
     seconds = float(struct.unpack("<q", data[position:position + 8])[0]) / 1000.0
@@ -210,11 +397,9 @@ def _get_date(data, position, as_class, tz_aware):
         return EPOCH_AWARE + datetime.timedelta(seconds=seconds), position
     return EPOCH_NAIVE + datetime.timedelta(seconds=seconds), position
 
-
 def _get_code(data, position, as_class, tz_aware):
     code, position = _get_string(data, position, as_class, tz_aware)
     return Code(code), position
-
 
 def _get_code_w_scope(data, position, as_class, tz_aware):
     _, position = _get_int(data, position)
@@ -222,10 +407,8 @@ def _get_code_w_scope(data, position, as_class, tz_aware):
     scope, position = _get_object(data, position, as_class, tz_aware)
     return Code(code, scope), position
 
-
 def _get_null(data, position, as_class, tz_aware):
     return None, position
-
 
 def _get_regex(data, position, as_class, tz_aware):
     pattern, position = _get_c_string(data, position)
@@ -245,19 +428,16 @@ def _get_regex(data, position, as_class, tz_aware):
         flags |= re.VERBOSE
     return re.compile(pattern, flags), position
 
-
 def _get_ref(data, position, as_class, tz_aware):
     position += 4
     collection, position = _get_c_string(data, position)
     oid, position = _get_oid(data, position)
     return DBRef(collection, oid), position
 
-
 def _get_timestamp(data, position, as_class, tz_aware):
     inc, position = _get_int(data, position, unsigned=True)
     timestamp, position = _get_int(data, position, unsigned=True)
     return Timestamp(timestamp, inc), position
-
 
 def _get_long(data, position, as_class, tz_aware):
     # Have to cast to long; on 32-bit unpack may return an int.
@@ -266,7 +446,6 @@ def _get_long(data, position, as_class, tz_aware):
     value = long(struct.unpack("<q", data[position:position + 8])[0])
     position += 8
     return value, position
-
 
 _element_getter = {
     BSONNUM: _get_number,
@@ -290,7 +469,6 @@ _element_getter = {
     BSONMIN: lambda w, x, y, z: (MinKey(), x),
     BSONMAX: lambda w, x, y, z: (MaxKey(), x)}
 
-
 def _element_to_dict(data, position, as_class, tz_aware):
     element_type = data[position:position + 1]
     position += 1
@@ -298,7 +476,6 @@ def _element_to_dict(data, position, as_class, tz_aware):
     value, position = _element_getter[element_type](data, position,
                                                     as_class, tz_aware)
     return element_name, value, position
-
 
 def _elements_to_dict(data, as_class, tz_aware):
     result = as_class()
@@ -318,11 +495,85 @@ def _bson_to_dict(data, as_class, tz_aware):
     elements = data[4:obj_size - 1]
     return (_elements_to_dict(elements, as_class, tz_aware), data[obj_size:])
 if _use_c:
-    _bson_to_dict = _cbson._bson_to_dict
+    _register_decoding_alternative('_bson_to_dict', _bson_to_dict, _cbson._bson_to_dict)
+    _thread_ctx.setDefault('_bson_to_dict', _cbson._bson_to_dict)
+else:
+    _thread_ctx.setDefault('_bson_to_dict', _bson_to_dict)
 
+def _annotate_element_state(element, state, class_key=None):
+    if not is_annotate_enabled():
+        return state
+    if class_key is None:
+        class_key = annotate_class_key()
+    if class_key is not None:
+        try:
+            state[class_key] = element.__class__.__name__
+        except AttributeError:
+            pass
+    return state
 
-def _element_to_bson(key, value, check_keys, uuid_subtype):
-    if not isinstance(key, basestring):
+def _wrap_element_state(element, state, class_key=None, state_key=None):
+    if not is_wrap_enabled():
+        return state
+    if state_key is None:
+        state_key = wrap_state_key()
+    if state_key is None:
+        return state
+    _wrapped = {}
+    if class_key is None:
+        class_key = wrap_class_key()
+    if class_key is not None:
+        try:
+            _wrapped[class_key] = element.__class__.__name__
+        except AttributeError:
+            pass
+    _wrapped[state_key] = state
+    return _wrapped
+
+def isstring(obj):
+    return isinstance(obj, basestring)
+try:
+    isstring("")
+except NameError:
+    def isstring(obj):
+        return isinstance(obj, str) or isinstance(obj, bytes)
+
+def _element_to_state(value, get_element_state=None, ensure_dict=False):
+    if is_getstate_enabled():
+        try:
+            state = value.__getstate__()
+        except AttributeError:
+            pass
+        else:
+            if isinstance(state, dict):
+                _annotate_element_state(value, state)
+                return state
+
+    if get_element_state is None:
+        get_element_state = default
+    try:
+        state = get_element_state(value)
+    except InvalidDocument:
+        pass
+    else:
+        if not ensure_dict or isinstance(state, dict):
+            return state
+
+    if is_dict_enabled():
+        try:
+            state = value.__dict__
+        except AttributeError:
+            pass
+        else:
+            if isinstance(state, dict):
+                _annotate_element_state(value, state)
+                return state
+            
+    # This raises an exception and should never be overloaded
+    return _get_element_state(value)
+
+def _element_to_bson(key, value, check_keys, uuid_subtype, get_element_state=None):
+    if not isstring(key):
         raise InvalidDocument("documents must have only string keys, "
                               "key was %r" % key)
 
@@ -354,7 +605,7 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
         if not value.scope:
             length = struct.pack("<i", len(cstring))
             return BSONCOD + name + length + cstring
-        scope = _dict_to_bson(value.scope, False, uuid_subtype, False)
+        scope = _ctx._dict_to_bson(value.scope, False, uuid_subtype, False, get_element_state)
         full_length = struct.pack("<i", 8 + len(cstring) + len(scope))
         length = struct.pack("<i", len(cstring))
         return BSONCWS + name + full_length + length + cstring + scope
@@ -366,15 +617,15 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
         cstring = _make_c_string(value)
         length = struct.pack("<i", len(cstring))
         return BSONSTR + name + length + cstring
-    if isinstance(value, unicode):
+    if isinstance(value, uc_type):
         cstring = _make_c_string(value)
         length = struct.pack("<i", len(cstring))
         return BSONSTR + name + length + cstring
     if isinstance(value, dict):
-        return BSONOBJ + name + _dict_to_bson(value, check_keys, uuid_subtype, False)
+        return BSONOBJ + name + _ctx._dict_to_bson(value, check_keys, uuid_subtype, False, get_element_state)
     if isinstance(value, (list, tuple)):
         as_dict = SON(zip([str(i) for i in range(len(value))], value))
-        return BSONARR + name + _dict_to_bson(as_dict, check_keys, uuid_subtype, False)
+        return BSONARR + name + _ctx._dict_to_bson(as_dict, check_keys, uuid_subtype, False, get_element_state)
     if isinstance(value, ObjectId):
         return BSONOID + name + value.binary
     if value is True:
@@ -424,15 +675,13 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
         return BSONRGX + name + _make_c_string(pattern, True) + \
             _make_c_string(flags)
     if isinstance(value, DBRef):
-        return _element_to_bson(key, value.as_doc(), False, uuid_subtype)
+        return _element_to_bson(key, value.as_doc(), False, uuid_subtype, get_element_state)
     if isinstance(value, MinKey):
         return BSONMIN + name
     if isinstance(value, MaxKey):
         return BSONMAX + name
 
-    raise InvalidDocument("cannot convert value of type %s to bson" %
-                          type(value))
-
+    return _element_to_bson(key, _element_to_state(value), check_keys, uuid_subtype, get_element_state)
 
 # Contrary to the C implementation, the Python
 # implementation of :func:`_dict_to_bson` does not check
@@ -443,18 +692,21 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
 # sure, that both implementations act identically.
 dict_to_bson_ensure_c_compat = True
 
-def _dict_to_bson(dct, check_keys, uuid_subtype, top_level=True):
+def _dict_to_bson(dct, check_keys, uuid_subtype, top_level=True, get_element_state=None):
     if dict_to_bson_ensure_c_compat and not isinstance(dct, dict):
-        # ensure that test_arbitrary_mapping_encode passes
-        raise TypeError("encoder expected a mapping type but got: %r" % dct)
+        try:
+            dct = _element_to_state(dct, ensure_dict=True)
+        except InvalidDocument:
+            # ensure that test_arbitrary_mapping_encode passes
+            raise TypeError("encoder expected a mapping type but got: %r" % dct)
 
     try:
         elements = []
         if top_level and "_id" in dct:
-            elements.append(_element_to_bson("_id", dct["_id"], False, uuid_subtype))
+            elements.append(_element_to_bson("_id", dct["_id"], False, uuid_subtype, get_element_state))
         for (key, value) in dct.iteritems():
             if not top_level or key != "_id":
-                elements.append(_element_to_bson(key, value, check_keys, uuid_subtype))
+                elements.append(_element_to_bson(key, value, check_keys, uuid_subtype, get_element_state))
     except AttributeError:
         raise TypeError("encoder expected a mapping type but got: %r" % dct)
 
@@ -462,9 +714,10 @@ def _dict_to_bson(dct, check_keys, uuid_subtype, top_level=True):
     length = len(encoded) + 5
     return struct.pack("<i", length) + encoded + ZERO
 if _use_c:
-    _dict_to_bson = _cbson._dict_to_bson
-
-
+    _register_encoding_alternative('_dict_to_bson', _dict_to_bson, _cbson._dict_to_bson)
+    _thread_ctx.setDefault('_dict_to_bson', _cbson._dict_to_bson)
+else:
+    _thread_ctx.setDefault('_dict_to_bson', _dict_to_bson)
 
 def decode_all(data, as_class=dict, tz_aware=True):
     """Decode BSON data to multiple documents.
@@ -495,8 +748,10 @@ def decode_all(data, as_class=dict, tz_aware=True):
         docs.append(_elements_to_dict(elements, as_class, tz_aware))
     return docs
 if _use_c:
-    decode_all = _cbson.decode_all
-
+    _register_decoding_alternative('decode_all', decode_all, _cbson.decode_all)
+    _thread_ctx.setDefault('decode_all', _cbson.decode_all)
+else:
+    _thread_ctx.setDefault('decode_all', decode_all)
 
 def is_valid(bson):
     """Check that the given string represents valid :class:`BSON` data.
@@ -513,18 +768,17 @@ def is_valid(bson):
                         "of a subclass of %s" % (binary_type.__name__,))
 
     try:
-        (_, remainder) = _bson_to_dict(bson, dict, True)
+        (_, remainder) = _ctx._bson_to_dict(bson, dict, True)
         return remainder == EMPTY
     except:
         return False
-
 
 class BSON(binary_type):
     """BSON (Binary JSON) data.
     """
 
     @classmethod
-    def encode(cls, document, check_keys=False, uuid_subtype=OLD_UUID_SUBTYPE):
+    def encode(cls, document, check_keys=False, uuid_subtype=OLD_UUID_SUBTYPE, default=None):
         """Encode a document to a new :class:`BSON` instance.
 
         A document can be any mapping type (like :class:`dict`).
@@ -543,7 +797,7 @@ class BSON(binary_type):
 
         .. versionadded:: 1.9
         """
-        return cls(_dict_to_bson(document, check_keys, uuid_subtype))
+        return cls(_ctx._dict_to_bson(document, check_keys, uuid_subtype, get_element_state=default))
 
     def decode(self, as_class=dict, tz_aware=False):
         """Decode this BSON data.
@@ -568,9 +822,8 @@ class BSON(binary_type):
 
         .. versionadded:: 1.9
         """
-        (document, _) = _bson_to_dict(self, as_class, tz_aware)
+        (document, _) = _ctx._bson_to_dict(self, as_class, tz_aware)
         return document
-
 
 def has_c():
     """Is the C extension installed?

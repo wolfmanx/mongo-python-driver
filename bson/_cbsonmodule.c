@@ -49,6 +49,14 @@ struct module_state {
     PyObject* MaxKey;
     PyObject* UTC;
     PyTypeObject* REType;
+    PyObject* get_element_state;
+    PyObject* is_getstate_enabled;
+    PyObject* is_dict_enabled;
+    PyObject* is_annotate_enabled;
+    PyObject* annotate_key;
+    PyObject* is_wrap_enabled;
+    PyObject* wrap_class_key;
+    PyObject* wrap_state_key;
 };
 
 #if PY_MAJOR_VERSION >= 3
@@ -109,7 +117,7 @@ static PyObject* elements_to_dict(PyObject* self, const char* string, int max,
 
 static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byte,
                                     PyObject* value, unsigned char check_keys,
-                                    unsigned char uuid_subtype, unsigned char first_attempt);
+                                    unsigned char uuid_subtype, unsigned char first_attempt, PyObject* get_element_state);
 
 /* Date stuff */
 static PyObject* datetime_from_millis(long long millis) {
@@ -255,7 +263,16 @@ static int _reload_python_objects(PyObject* module) {
         _reload_object(&state->MinKey, "bson.min_key", "MinKey") ||
         _reload_object(&state->MaxKey, "bson.max_key", "MaxKey") ||
         _reload_object(&state->UTC, "bson.tz_util", "utc") ||
-        _reload_object(&state->RECompile, "re", "compile")) {
+        _reload_object(&state->RECompile, "re", "compile") ||
+        _reload_object(&state->get_element_state, "bson", "default") ||
+        _reload_object(&state->is_getstate_enabled, "bson", "is_getstate_enabled") ||
+        _reload_object(&state->is_dict_enabled, "bson", "is_dict_enabled") ||
+        _reload_object(&state->is_annotate_enabled, "bson", "is_annotate_enabled") ||
+        _reload_object(&state->annotate_key, "bson", "annotate_key") ||
+        _reload_object(&state->is_wrap_enabled, "bson", "is_wrap_enabled") ||
+        _reload_object(&state->wrap_class_key, "bson", "wrap_class_key") ||
+        _reload_object(&state->wrap_state_key, "bson", "wrap_state_key")
+        ) {
         return 1;
     }
     /* If we couldn't import uuid then we must be on 2.4. Just ignore. */
@@ -273,15 +290,199 @@ static int _reload_python_objects(PyObject* module) {
     return 0;
 }
 
+static PyObject* _annotate_element_state(
+    PyObject* self, PyObject* element, PyObject* element_state,
+    const char *class_key) {
+    struct module_state *state = GETSTATE(self);
+    PyObject* _is_annotate_enabled = PyObject_CallFunction(state->is_annotate_enabled, NULL);
+    int is_annotate_enabled = _is_annotate_enabled == Py_True;
+    Py_XDECREF(_is_annotate_enabled);
+    if (is_annotate_enabled) {
+        PyObject* _class = PyObject_GetAttrString(element, "__class__");
+        if (_class != NULL) {
+            PyObject* _class_name = PyObject_GetAttrString(_class, "__name__");
+            PyObject* _class_key_o = NULL;
+            if (_class_name != NULL) {
+                if (class_key == NULL) {
+                    _class_key_o = PyObject_CallFunction(state->annotate_key, NULL);
+                    if (_class_key_o == NULL) {
+                        class_key = "_$class";
+                    }
+                    if (_class_key_o == Py_None) {
+                        Py_DECREF(_class_key_o);
+                        _class_key_o = NULL;
+                    }
+                }
+                if (_class_key_o == NULL && class_key != NULL) {
+#if PY_MAJOR_VERSION >= 3
+                    _class_key_o = PyUnicode_FromString(class_key);
+#else
+                    _class_key_o = PyString_FromString(class_key);
+#endif
+                }
+                if (_class_key_o != NULL) {
+                    PyDict_SetItem(element_state, _class_key_o, _class_name);
+                    Py_DECREF(_class_key_o);
+                }
+                Py_DECREF(_class_name);
+            }
+            Py_DECREF(_class);
+        }
+    }
+    PyErr_Clear();
+    return element_state;
+}
+
+static PyObject* _wrap_element_state(
+    PyObject* self, PyObject* element, PyObject* element_state,
+    const char *class_key, const char *state_key) {
+    struct module_state *state = GETSTATE(self);
+    PyObject* _is_wrap_enabled = PyObject_CallFunction(state->is_wrap_enabled, NULL);
+    int is_wrap_enabled = _is_wrap_enabled == Py_True;
+    Py_XDECREF(_is_wrap_enabled);
+    if (is_wrap_enabled) {
+        PyObject* _dict = PyDict_New();
+        if (_dict != NULL) {
+            PyObject* _class = PyObject_GetAttrString(element, "__class__");
+            PyObject* _state_key_o = NULL;
+            if (_class != NULL) {
+                PyObject* _class_name = PyObject_GetAttrString(_class, "__name__");
+                PyObject* _class_key_o = NULL;
+                if (_class_name != NULL) {
+                    if (class_key == NULL) {
+                        _class_key_o = PyObject_CallFunction(state->wrap_class_key, NULL);
+                        if (_class_key_o == NULL) {
+                            class_key = "_$class";
+                        }
+                        if (_class_key_o == Py_None) {
+                            Py_DECREF(_class_key_o);
+                            _class_key_o = NULL;
+                        }
+                    }
+                    if (_class_key_o == NULL && class_key != NULL) {
+#if PY_MAJOR_VERSION >= 3
+                        _class_key_o = PyUnicode_FromString(class_key);
+#else
+                        _class_key_o = PyString_FromString(class_key);
+#endif
+                    }
+                    if (_class_key_o != NULL) {
+                        PyDict_SetItem(_dict, _class_key_o, _class_name);
+                        Py_DECREF(_class_key_o);
+                    }
+                    Py_DECREF(_class_name);
+                }
+                Py_DECREF(_class);
+            }
+            if (state_key == NULL) {
+                _state_key_o = PyObject_CallFunction(state->wrap_state_key, NULL);
+                if (_state_key_o == NULL) {
+                    state_key = "_$state";
+                }
+                if (_state_key_o == Py_None) {
+                    Py_DECREF(_state_key_o);
+                    _state_key_o = NULL;
+                }
+            }
+            if (_state_key_o == NULL && state_key != NULL) {
+#if PY_MAJOR_VERSION >= 3
+                        _state_key_o = PyUnicode_FromString(state_key);
+#else
+                        _state_key_o = PyString_FromString(state_key);
+#endif
+            }
+            if (_state_key_o != NULL) {
+                PyDict_SetItem(_dict, _state_key_o, element_state);
+                Py_DECREF(_state_key_o);
+                PyErr_Clear();
+                return _dict;
+            } else {
+                Py_DECREF(_dict);
+            }
+        } 
+    }
+    PyErr_Clear();
+    Py_INCREF(element_state);
+    return element_state;
+}
+
+/* try various transformations to obtain a dict from an object */
+static PyObject* _element_to_state(PyObject* self, PyObject* element, PyObject* get_element_state) {
+    struct module_state *state = GETSTATE(self);
+    {
+        /* try __getstate__ */
+        PyObject* _is_getstate_enabled = PyObject_CallFunction(state->is_getstate_enabled, NULL);
+        int is_getstate_enabled = _is_getstate_enabled == Py_True;
+        Py_XDECREF(_is_getstate_enabled);
+        if (is_getstate_enabled)
+        {
+            PyObject* element_state = NULL;
+            element_state = PyObject_CallMethod(element, "__getstate__", NULL);
+            if (!PyErr_Occurred() && element_state != NULL && PyDict_Check(element_state)) {
+                _annotate_element_state(self, element, element_state, NULL);
+                {
+                    PyObject* _wrapped_element_state = _wrap_element_state(
+                        self, element, element_state, NULL, NULL);
+                    Py_DECREF(element_state);
+                    return _wrapped_element_state;
+                }
+            }
+            PyErr_Clear();
+            Py_XDECREF(element_state);
+        }
+    }
+
+    {
+        /* try get_element_state */
+        PyObject *_get_element_state = get_element_state;
+        if (_get_element_state == NULL) {
+            _get_element_state = state->get_element_state;
+        }
+        if (_get_element_state != NULL) {
+            PyObject* element_state = PyObject_CallFunctionObjArgs(_get_element_state, element, NULL);
+            if (!PyErr_Occurred() && element_state != NULL && PyDict_Check(element_state)) {
+                return element_state;
+            }
+            PyErr_Clear();
+            Py_XDECREF(element_state);
+        }
+    }
+
+    {
+        /* try __dict__ */
+        PyObject* _is_dict_enabled = PyObject_CallFunction(state->is_dict_enabled, NULL);
+        int is_dict_enabled = _is_dict_enabled == Py_True;
+        Py_XDECREF(_is_dict_enabled);
+        if (is_dict_enabled)
+        {
+            PyObject* element_dict = NULL;
+            element_dict = PyObject_GetAttrString(element, "__dict__");
+            if (!PyErr_Occurred() && element_dict != NULL && PyDict_Check(element_dict)) {
+                _annotate_element_state(self, element, element_dict, NULL);
+                {
+                    PyObject* _wrapped_element_state = _wrap_element_state(
+                        self, element, element_dict, NULL, NULL);
+                    Py_DECREF(element_dict);
+                    return _wrapped_element_state;
+                }
+            }
+            PyErr_Clear();
+            Py_XDECREF(element_dict);
+        }
+    }
+    return NULL;
+}
+
 static int write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byte,
                                    PyObject* value, unsigned char check_keys,
                                    unsigned char uuid_subtype,
-                                   unsigned char first_attempt) {
+                                   unsigned char first_attempt,
+                                   PyObject* get_element_state) {
     int result;
     if(Py_EnterRecursiveCall(" while encoding an object to BSON "))
         return 0;
     result = _write_element_to_buffer(self, buffer, type_byte, value,
-                                      check_keys, uuid_subtype, first_attempt);
+                                      check_keys, uuid_subtype, first_attempt, get_element_state);
     Py_LeaveRecursiveCall();
     return result;
 }
@@ -293,7 +494,7 @@ static int write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byt
  * returns 0 on failure */
 static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byte,
                                     PyObject* value, unsigned char check_keys,
-                                    unsigned char uuid_subtype, unsigned char first_attempt) {
+                                    unsigned char uuid_subtype, unsigned char first_attempt, PyObject* get_element_state) {
     struct module_state *state = GETSTATE(self);
 
     if (PyBool_Check(value)) {
@@ -349,7 +550,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         return 1;
     } else if (PyDict_Check(value)) {
         *(buffer_get_buffer(buffer) + type_byte) = 0x03;
-        return write_dict(self, buffer, value, check_keys, uuid_subtype, 0);
+        return write_dict(self, buffer, value, check_keys, uuid_subtype, 0, get_element_state);
     } else if (PyList_Check(value) || PyTuple_Check(value)) {
         int start_position,
             length_location,
@@ -390,7 +591,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
 
             item_value = PySequence_GetItem(value, i);
             if (!write_element_to_buffer(self, buffer, list_type_byte,
-                                         item_value, check_keys, uuid_subtype, 1)) {
+                                         item_value, check_keys, uuid_subtype, 1, get_element_state)) {
                 Py_DECREF(item_value);
                 return 0;
             }
@@ -527,7 +728,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
             return 0;
         }
 
-        if (!write_dict(self, buffer, scope, 0, uuid_subtype, 0)) {
+        if (!write_dict(self, buffer, scope, 0, uuid_subtype, 0, get_element_state)) {
             Py_DECREF(scope);
             return 0;
         }
@@ -628,7 +829,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         if (!as_doc) {
             return 0;
         }
-        if (!write_dict(self, buffer, as_doc, 0, uuid_subtype, 0)) {
+        if (!write_dict(self, buffer, as_doc, 0, uuid_subtype, 0, get_element_state)) {
             Py_DECREF(as_doc);
             return 0;
         }
@@ -774,19 +975,28 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
     } else if (PyObject_IsInstance(value, state->MaxKey)) {
         *(buffer_get_buffer(buffer) + type_byte) = 0x7F;
         return 1;
-    } else if (first_attempt) {
-        /* Try reloading the modules and having one more go at it. */
-        if (WARN(PyExc_RuntimeWarning, "couldn't encode - reloading python "
-                 "modules and trying again. if you see this without getting "
-                 "an InvalidDocument exception please see http://api.mongodb"
-                 ".org/python/current/faq.html#does-pymongo-work-with-mod-"
-                 "wsgi") == -1) {
-            return 0;
+    } else {
+        PyObject* element_state = _element_to_state(self, value, get_element_state);
+        if (element_state != NULL)
+        {
+            int result = write_element_to_buffer(self, buffer, type_byte, element_state, check_keys, uuid_subtype, 1, get_element_state);
+            Py_DECREF(element_state);
+            return result;
         }
-        if (_reload_python_objects(self)) {
-            return 0;
+        if (first_attempt) {
+            /* Try reloading the modules and having one more go at it. */
+            if (WARN(PyExc_RuntimeWarning, "couldn't encode - reloading python "
+                     "modules and trying again. if you see this without getting "
+                     "an InvalidDocument exception please see http://api.mongodb"
+                     ".org/python/current/faq.html#does-pymongo-work-with-mod-"
+                     "wsgi") == -1) {
+                return 0;
+            }
+            if (_reload_python_objects(self)) {
+                return 0;
+            }
+            return write_element_to_buffer(self, buffer, type_byte, value, check_keys, uuid_subtype, 0, get_element_state);
         }
-        return write_element_to_buffer(self, buffer, type_byte, value, check_keys, uuid_subtype, 0);
     }
     {
         PyObject* repr = PyObject_Repr(value);
@@ -847,7 +1057,7 @@ static int check_key_name(const char* name,
  * Returns 0 on failure */
 int write_pair(PyObject* self, buffer_t buffer, const char* name, Py_ssize_t name_length,
                PyObject* value, unsigned char check_keys,
-               unsigned char uuid_subtype, unsigned char allow_id) {
+               unsigned char uuid_subtype, unsigned char allow_id, PyObject* get_element_state) {
     int type_byte;
 
     /* Don't write any _id elements unless we're explicitly told to -
@@ -869,7 +1079,7 @@ int write_pair(PyObject* self, buffer_t buffer, const char* name, Py_ssize_t nam
         return 0;
     }
     if (!write_element_to_buffer(self, buffer, type_byte, value,
-                                 check_keys, uuid_subtype, 1)) {
+                                 check_keys, uuid_subtype, 1, get_element_state)) {
         return 0;
     }
     return 1;
@@ -878,7 +1088,8 @@ int write_pair(PyObject* self, buffer_t buffer, const char* name, Py_ssize_t nam
 int decode_and_write_pair(PyObject* self, buffer_t buffer,
                           PyObject* key, PyObject* value,
                           unsigned char check_keys,
-                          unsigned char uuid_subtype, unsigned char top_level) {
+                          unsigned char uuid_subtype, unsigned char top_level,
+                          PyObject* get_element_state) {
     PyObject* encoded;
     if (PyUnicode_Check(key)) {
         result_t status;
@@ -946,11 +1157,11 @@ int decode_and_write_pair(PyObject* self, buffer_t buffer,
 #if PY_MAJOR_VERSION >= 3
     if (!write_pair(self, buffer, PyBytes_AsString(encoded),
                     PyBytes_Size(encoded), value,
-                    check_keys, uuid_subtype, !top_level)) {
+                    check_keys, uuid_subtype, !top_level, get_element_state)) {
 #else
     if (!write_pair(self, buffer, PyString_AsString(encoded),
                     PyString_Size(encoded), value,
-                    check_keys, uuid_subtype, !top_level)) {
+                    check_keys, uuid_subtype, !top_level, get_element_state)) {
 #endif
         Py_DECREF(encoded);
         return 0;
@@ -962,7 +1173,7 @@ int decode_and_write_pair(PyObject* self, buffer_t buffer,
 
 /* returns 0 on failure */
 int write_dict(PyObject* self, buffer_t buffer, PyObject* dict,
-               unsigned char check_keys, unsigned char uuid_subtype, unsigned char top_level) {
+               unsigned char check_keys, unsigned char uuid_subtype, unsigned char top_level, PyObject* get_element_state) {
     PyObject* key;
     PyObject* iter;
     char zero = 0;
@@ -970,6 +1181,16 @@ int write_dict(PyObject* self, buffer_t buffer, PyObject* dict,
     int length_location;
 
     if (!PyDict_Check(dict)) {
+        PyObject* element_state = _element_to_state(self, dict, get_element_state);
+        if (element_state != NULL)
+        {
+            if (PyDict_Check(element_state)) {
+                int result = write_dict(self, buffer, element_state, check_keys, uuid_subtype, top_level, get_element_state);
+                Py_DECREF(element_state);
+                return result;
+            }
+            Py_DECREF(element_state);
+        }
         PyObject* repr = PyObject_Repr(dict);
 #if PY_MAJOR_VERSION >= 3
         PyObject* errmsg = PyUnicode_FromString("encoder expected a mapping type but got: ");
@@ -998,7 +1219,7 @@ int write_dict(PyObject* self, buffer_t buffer, PyObject* dict,
         if (_id) {
             /* Don't bother checking keys, but do make sure we're allowed to
              * write _id */
-            if (!write_pair(self, buffer, "_id", 3, _id, 0, uuid_subtype, 1)) {
+            if (!write_pair(self, buffer, "_id", 3, _id, 0, uuid_subtype, 1, get_element_state)) {
                 return 0;
             }
         }
@@ -1017,7 +1238,7 @@ int write_dict(PyObject* self, buffer_t buffer, PyObject* dict,
             return 0;
         }
         if (!decode_and_write_pair(self, buffer, key, value,
-                                   check_keys, uuid_subtype, top_level)) {
+                                   check_keys, uuid_subtype, top_level, get_element_state)) {
             Py_DECREF(key);
             Py_DECREF(iter);
             return 0;
@@ -1035,15 +1256,23 @@ int write_dict(PyObject* self, buffer_t buffer, PyObject* dict,
     return 1;
 }
 
-static PyObject* _cbson_dict_to_bson(PyObject* self, PyObject* args) {
+static PyObject* _cbson_dict_to_bson(PyObject* self, PyObject* args, PyObject* kwargs) {
     PyObject* dict;
     PyObject* result;
     unsigned char check_keys;
     unsigned char uuid_subtype;
+    unsigned char top_level = 1;
+    PyObject* get_element_state = NULL;
     buffer_t buffer;
+    char *keywords[] = { "dict", "check_keys", "uuid_subtype", "top_level", "get_element_state", NULL };
 
-    if (!PyArg_ParseTuple(args, "Obb", &dict, &check_keys, &uuid_subtype)) {
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "Obb|bO", keywords, &dict, &check_keys, &uuid_subtype, &top_level, &get_element_state)) {
         return NULL;
+    }
+
+    if (get_element_state == Py_None)
+    {
+        get_element_state = NULL;
     }
 
     buffer = buffer_new();
@@ -1052,7 +1281,7 @@ static PyObject* _cbson_dict_to_bson(PyObject* self, PyObject* args) {
         return NULL;
     }
 
-    if (!write_dict(self, buffer, dict, check_keys, uuid_subtype, 1)) {
+    if (!write_dict(self, buffer, dict, check_keys, uuid_subtype, top_level, get_element_state)) {
         buffer_free(buffer);
         return NULL;
     }
@@ -1730,7 +1959,7 @@ static PyObject* _cbson_decode_all(PyObject* self, PyObject* args) {
 }
 
 static PyMethodDef _CBSONMethods[] = {
-    {"_dict_to_bson", _cbson_dict_to_bson, METH_VARARGS,
+    {"_dict_to_bson", (PyCFunction) _cbson_dict_to_bson, METH_VARARGS|METH_KEYWORDS,
      "convert a dictionary to a string containing its BSON representation."},
     {"_bson_to_dict", _cbson_bson_to_dict, METH_VARARGS,
      "convert a BSON string to a SON object."},
