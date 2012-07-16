@@ -309,7 +309,7 @@ def _elements_to_dict(data, as_class, tz_aware):
         result[key] = value
     return result
 
-def _bson_to_dict(data, as_class, tz_aware):
+def _py_bson_to_dict(data, as_class, tz_aware):
     obj_size = struct.unpack("<i", data[:4])[0]
     if len(data) < obj_size:
         raise InvalidBSON("objsize too large")
@@ -319,7 +319,8 @@ def _bson_to_dict(data, as_class, tz_aware):
     return (_elements_to_dict(elements, as_class, tz_aware), data[obj_size:])
 if _use_c:
     _bson_to_dict = _cbson._bson_to_dict
-
+else:
+    _bson_to_dict = _py_bson_to_dict
 
 def _element_to_bson(key, value, check_keys, uuid_subtype):
     if not isinstance(key, basestring):
@@ -443,7 +444,7 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
 # sure, that both implementations act identically.
 dict_to_bson_ensure_c_compat = True
 
-def _dict_to_bson(dct, check_keys, uuid_subtype, top_level=True):
+def _py_dict_to_bson(dct, check_keys, uuid_subtype, top_level=True):
     if dict_to_bson_ensure_c_compat and not isinstance(dct, dict):
         # ensure that test_arbitrary_mapping_encode passes
         raise TypeError("encoder expected a mapping type but got: %r" % dct)
@@ -463,10 +464,11 @@ def _dict_to_bson(dct, check_keys, uuid_subtype, top_level=True):
     return struct.pack("<i", length) + encoded + ZERO
 if _use_c:
     _dict_to_bson = _cbson._dict_to_bson
+else:
+    _dict_to_bson = _py_dict_to_bson
 
 
-
-def decode_all(data, as_class=dict, tz_aware=True):
+def _py_decode_all(data, as_class=dict, tz_aware=True):
     """Decode BSON data to multiple documents.
 
     `data` must be a string of concatenated, valid, BSON-encoded
@@ -496,7 +498,8 @@ def decode_all(data, as_class=dict, tz_aware=True):
     return docs
 if _use_c:
     decode_all = _cbson.decode_all
-
+else:
+    decode_all = _py_decode_all
 
 def is_valid(bson):
     """Check that the given string represents valid :class:`BSON` data.
