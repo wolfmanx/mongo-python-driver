@@ -33,7 +33,10 @@ class InvalidStringData(BSONError):
 class InvalidDocument(BSONError):
     """Raised when trying to create a BSON object from an invalid document.
     """
-
+    bson_error_parent = None
+    bson_error_key = None
+    bson_error_value = None
+    
 
 class InvalidId(BSONError):
     """Raised when trying to create an ObjectId from invalid data.

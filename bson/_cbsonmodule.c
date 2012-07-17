@@ -117,7 +117,7 @@ static PyObject* elements_to_dict(PyObject* self, const char* string, int max,
 
 static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byte,
                                     PyObject* value, unsigned char check_keys,
-                                    unsigned char uuid_subtype, unsigned char first_attempt, PyObject* get_element_state);
+                                    unsigned char uuid_subtype, unsigned char first_attempt, PyObject* get_element_state, const char* key_name, PyObject* parent);
 
 /* Date stuff */
 static PyObject* datetime_from_millis(long long millis) {
@@ -477,12 +477,12 @@ static int write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byt
                                    PyObject* value, unsigned char check_keys,
                                    unsigned char uuid_subtype,
                                    unsigned char first_attempt,
-                                   PyObject* get_element_state) {
+                                   PyObject* get_element_state, const char* key_name, PyObject* parent) {
     int result;
     if(Py_EnterRecursiveCall(" while encoding an object to BSON "))
         return 0;
     result = _write_element_to_buffer(self, buffer, type_byte, value,
-                                      check_keys, uuid_subtype, first_attempt, get_element_state);
+                                      check_keys, uuid_subtype, first_attempt, get_element_state, key_name, parent);
     Py_LeaveRecursiveCall();
     return result;
 }
@@ -494,7 +494,7 @@ static int write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byt
  * returns 0 on failure */
 static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byte,
                                     PyObject* value, unsigned char check_keys,
-                                    unsigned char uuid_subtype, unsigned char first_attempt, PyObject* get_element_state) {
+                                    unsigned char uuid_subtype, unsigned char first_attempt, PyObject* get_element_state, const char* key_name, PyObject* parent) {
     struct module_state *state = GETSTATE(self);
 
     if (PyBool_Check(value)) {
@@ -587,14 +587,15 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
                 free(name);
                 return 0;
             }
-            free(name);
 
             item_value = PySequence_GetItem(value, i);
             if (!write_element_to_buffer(self, buffer, list_type_byte,
-                                         item_value, check_keys, uuid_subtype, 1, get_element_state)) {
+                                         item_value, check_keys, uuid_subtype, 1, get_element_state, name, value)) {
                 Py_DECREF(item_value);
+                free(name);
                 return 0;
             }
+            free(name);
             Py_DECREF(item_value);
         }
 
@@ -979,7 +980,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         PyObject* element_state = _element_to_state(self, value, get_element_state);
         if (element_state != NULL)
         {
-            int result = write_element_to_buffer(self, buffer, type_byte, element_state, check_keys, uuid_subtype, 1, get_element_state);
+            int result = write_element_to_buffer(self, buffer, type_byte, element_state, check_keys, uuid_subtype, 1, get_element_state, key_name, parent);
             Py_DECREF(element_state);
             return result;
         }
@@ -995,12 +996,25 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
             if (_reload_python_objects(self)) {
                 return 0;
             }
-            return write_element_to_buffer(self, buffer, type_byte, value, check_keys, uuid_subtype, 0, get_element_state);
+            return write_element_to_buffer(self, buffer, type_byte, value, check_keys, uuid_subtype, 0, get_element_state, key_name, parent);
         }
     }
     {
         PyObject* repr = PyObject_Repr(value);
         PyObject* InvalidDocument = _error("InvalidDocument");
+#if defined (BSON_EXCEPTION_VERBOSE) || 1
+        {
+#if PY_MAJOR_VERSION >= 3
+            PyObject* key_o = PyUnicode_FromString(key_name);
+#else
+            PyObject* key_o = PyString_FromString(key_name);
+#endif
+            PyObject_SetAttrString(InvalidDocument, "bson_error_parent", parent);
+            PyObject_SetAttrString(InvalidDocument, "bson_error_key", key_o);
+            PyObject_SetAttrString(InvalidDocument, "bson_error_value", value);
+            Py_DECREF(key_o);
+        }
+#endif /* defined (BSON_EXCEPTION_VERBOSE) */
 #if PY_MAJOR_VERSION >= 3
         PyObject* errmsg = PyUnicode_FromString("Cannot encode object: ");
         PyObject* error = PyUnicode_Concat(errmsg, repr);
@@ -1057,7 +1071,7 @@ static int check_key_name(const char* name,
  * Returns 0 on failure */
 int write_pair(PyObject* self, buffer_t buffer, const char* name, Py_ssize_t name_length,
                PyObject* value, unsigned char check_keys,
-               unsigned char uuid_subtype, unsigned char allow_id, PyObject* get_element_state) {
+               unsigned char uuid_subtype, unsigned char allow_id, PyObject* get_element_state, PyObject* parent) {
     int type_byte;
 
     /* Don't write any _id elements unless we're explicitly told to -
@@ -1079,7 +1093,7 @@ int write_pair(PyObject* self, buffer_t buffer, const char* name, Py_ssize_t nam
         return 0;
     }
     if (!write_element_to_buffer(self, buffer, type_byte, value,
-                                 check_keys, uuid_subtype, 1, get_element_state)) {
+                                 check_keys, uuid_subtype, 1, get_element_state, name, parent)) {
         return 0;
     }
     return 1;
@@ -1089,7 +1103,7 @@ int decode_and_write_pair(PyObject* self, buffer_t buffer,
                           PyObject* key, PyObject* value,
                           unsigned char check_keys,
                           unsigned char uuid_subtype, unsigned char top_level,
-                          PyObject* get_element_state) {
+                          PyObject* get_element_state, PyObject* parent) {
     PyObject* encoded;
     if (PyUnicode_Check(key)) {
         result_t status;
@@ -1157,11 +1171,11 @@ int decode_and_write_pair(PyObject* self, buffer_t buffer,
 #if PY_MAJOR_VERSION >= 3
     if (!write_pair(self, buffer, PyBytes_AsString(encoded),
                     PyBytes_Size(encoded), value,
-                    check_keys, uuid_subtype, !top_level, get_element_state)) {
+                    check_keys, uuid_subtype, !top_level, get_element_state, parent)) {
 #else
     if (!write_pair(self, buffer, PyString_AsString(encoded),
                     PyString_Size(encoded), value,
-                    check_keys, uuid_subtype, !top_level, get_element_state)) {
+                    check_keys, uuid_subtype, !top_level, get_element_state, parent)) {
 #endif
         Py_DECREF(encoded);
         return 0;
@@ -1219,7 +1233,34 @@ int write_dict(PyObject* self, buffer_t buffer, PyObject* dict,
         if (_id) {
             /* Don't bother checking keys, but do make sure we're allowed to
              * write _id */
-            if (!write_pair(self, buffer, "_id", 3, _id, 0, uuid_subtype, 1, get_element_state)) {
+            if (!write_pair(self, buffer, "_id", 3, _id, 0, uuid_subtype, 1, get_element_state, dict)) {
+#if defined (BSON_EXCEPTION_VERBOSE)
+                PyObject* exc = PyErr_Occurred();
+                if ( exc != NULL )
+                {
+                    PyObject *ptype = NULL;
+                    PyObject *pvalue = NULL;
+                    PyObject *ptraceback = NULL;
+                    PyObject *InvalidDocument = NULL;
+                    PyErr_Fetch(&ptype, &pvalue, &ptraceback);
+                    InvalidDocument = _error("InvalidDocument");
+                    if (InvalidDocument != NULL ) {
+                        if ( PyErr_GivenExceptionMatches(exc, InvalidDocument))
+                        {
+#if PY_MAJOR_VERSION >= 3
+                            PyObject* key_o = PyUnicode_FromString("_id");
+#else
+                            PyObject* key_o = PyString_FromString("_id");
+#endif
+                            PyObject_SetAttrString(exc, "bson_error_dict", dict);
+                            PyObject_SetAttrString(exc, "bson_error_key", key_o);
+                            Py_DECREF(key_o);
+                        }
+                        Py_DECREF(InvalidDocument);
+                    }
+                    PyErr_Restore(ptype, pvalue, ptraceback);
+                }
+#endif /* defined (BSON_EXCEPTION_VERBOSE) */
                 return 0;
             }
         }
@@ -1238,7 +1279,28 @@ int write_dict(PyObject* self, buffer_t buffer, PyObject* dict,
             return 0;
         }
         if (!decode_and_write_pair(self, buffer, key, value,
-                                   check_keys, uuid_subtype, top_level, get_element_state)) {
+                                   check_keys, uuid_subtype, top_level, get_element_state, dict)) {
+#if defined (BSON_EXCEPTION_VERBOSE)
+            PyObject* exc = PyErr_Occurred();
+            if ( exc != NULL )
+            {
+                PyObject *ptype = NULL;
+                PyObject *pvalue = NULL;
+                PyObject *ptraceback = NULL;
+                PyObject *InvalidDocument = NULL;
+                PyErr_Fetch(&ptype, &pvalue, &ptraceback);
+                InvalidDocument = _error("InvalidDocument");
+                if (InvalidDocument != NULL ) {
+                    if ( PyErr_GivenExceptionMatches(exc, InvalidDocument))
+                    {
+                        PyObject_SetAttrString(exc, "bson_error_dict", dict);
+                        PyObject_SetAttrString(exc, "bson_error_key", key);
+                    }
+                }
+                PyErr_Restore(ptype, pvalue, ptraceback);
+                Py_XDECREF(InvalidDocument);
+            }
+#endif /* defined (BSON_EXCEPTION_VERBOSE) */
             Py_DECREF(key);
             Py_DECREF(iter);
             return 0;
