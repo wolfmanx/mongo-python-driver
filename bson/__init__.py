@@ -21,6 +21,7 @@ import re
 import struct
 import sys
 
+from bson.config import use_c_encoding_as_default, use_c_decoding_as_default
 from bson.binary import Binary, OLD_UUID_SUBTYPE
 from bson.code import Code
 from bson.dbref import DBRef
@@ -69,8 +70,12 @@ def wrap_state_key():
 try:
     from bson import _cbson
     _use_c = True
+    _use_c_encoding = use_c_encoding_as_default
+    _use_c_decoding = use_c_decoding_as_default
 except ImportError:
     _use_c = False
+    _use_c_encoding = False
+    _use_c_decoding = False
 
 try:
     import uuid
@@ -214,6 +219,20 @@ def enable_c(on=True):
     enable_c_decoding(on)
     return _ctx._use_c_encoding and _ctx._use_c_decoding
 
+def is_c_enabled(both=False):
+    '''Check if C extension is enabled for encoding and/or decoding.
+
+    :param both: If False (the default), the C extension is considered
+      enabled if it is enabled for any of the encoding or decoding
+      functions.
+
+      If True, the C extension is considered enabled if it is enabled
+      for both the encoding and decoding functions.
+    '''
+    if both:
+        return _ctx._use_c_encoding and _ctx._use_c_decoding
+    return _ctx._use_c_encoding or _ctx._use_c_decoding
+
 # |:sec:| Default Callback to Get Element State
 # This function is called by :func:`default`.
 def _get_element_state(value):
@@ -282,7 +301,7 @@ def set_wrap_state_key(key):
     _ctx.wrap_state_key = key
 _thread_ctx.setDefault('wrap_state_key', '_$state')
 # |:sec:| End of Features
-
+    
 def _get_int(data, position, as_class=None, tz_aware=False, unsigned=False):
     format = unsigned and "I" or "i"
     try:
@@ -496,6 +515,7 @@ def _bson_to_dict(data, as_class, tz_aware):
     return (_elements_to_dict(elements, as_class, tz_aware), data[obj_size:])
 if _use_c:
     _register_decoding_alternative('_bson_to_dict', _bson_to_dict, _cbson._bson_to_dict)
+if _use_c and use_c_decoding_as_default:
     _thread_ctx.setDefault('_bson_to_dict', _cbson._bson_to_dict)
 else:
     _thread_ctx.setDefault('_bson_to_dict', _bson_to_dict)
@@ -715,11 +735,12 @@ def _dict_to_bson(dct, check_keys, uuid_subtype, top_level=True, get_element_sta
     return struct.pack("<i", length) + encoded + ZERO
 if _use_c:
     _register_encoding_alternative('_dict_to_bson', _dict_to_bson, _cbson._dict_to_bson)
+if _use_c and use_c_encoding_as_default:
     _thread_ctx.setDefault('_dict_to_bson', _cbson._dict_to_bson)
 else:
     _thread_ctx.setDefault('_dict_to_bson', _dict_to_bson)
 
-def decode_all(data, as_class=dict, tz_aware=True):
+def _decode_all(data, as_class=dict, tz_aware=True):
     """Decode BSON data to multiple documents.
 
     `data` must be a string of concatenated, valid, BSON-encoded
@@ -748,10 +769,16 @@ def decode_all(data, as_class=dict, tz_aware=True):
         docs.append(_elements_to_dict(elements, as_class, tz_aware))
     return docs
 if _use_c:
-    _register_decoding_alternative('decode_all', decode_all, _cbson.decode_all)
-    _thread_ctx.setDefault('decode_all', _cbson.decode_all)
+    _register_decoding_alternative('_decode_all', _decode_all, _cbson.decode_all)
+if _use_c and use_c_decoding_as_default:
+    _thread_ctx.setDefault('_decode_all', _cbson.decode_all)
 else:
-    _thread_ctx.setDefault('decode_all', decode_all)
+    _thread_ctx.setDefault('_decode_all', _decode_all)
+
+def decode_all(data, as_class=dict, tz_aware=True):
+    # This is necessary to allow `from bson import decodeall` to work
+    # independent from enable_c().
+    return _ctx._decode_all(data, as_class, tz_aware)
 
 def is_valid(bson):
     """Check that the given string represents valid :class:`BSON` data.

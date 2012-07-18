@@ -105,7 +105,7 @@ static int add_last_error(PyObject* self, buffer_t buffer,
 
     /* getlasterror: 1 */
     one = PyLong_FromLong(1);
-    if (!write_pair(state->_cbson, buffer, "getlasterror", 12, one, 0, 4, 1, NULL)) {
+    if (!write_pair(state->_cbson, buffer, "getlasterror", 12, one, 0, 4, 1, NULL, NULL)) {
         Py_DECREF(one);
         return 0;
     }
@@ -113,7 +113,7 @@ static int add_last_error(PyObject* self, buffer_t buffer,
 
     /* getlasterror options */
     while (PyDict_Next(args, &pos, &key, &value)) {
-        if (!decode_and_write_pair(state->_cbson, buffer, key, value, 0, 4, 0, NULL)) {
+        if (!decode_and_write_pair(state->_cbson, buffer, key, value, 0, 4, 0, NULL, NULL)) {
             return 0;
         }
     }
