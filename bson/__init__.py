@@ -21,7 +21,6 @@ import re
 import struct
 import sys
 
-from bson.config import use_c_encoding_as_default, use_c_decoding_as_default
 from bson.binary import Binary, OLD_UUID_SUBTYPE
 from bson.code import Code
 from bson.dbref import DBRef
@@ -40,12 +39,8 @@ from bson.tz_util import utc
 try:
     from bson import _cbson
     _use_c = True
-    _use_c_encoding = use_c_encoding_as_default
-    _use_c_decoding = use_c_decoding_as_default
 except ImportError:
     _use_c = False
-    _use_c_encoding = False
-    _use_c_decoding = False
 
 try:
     import uuid
@@ -95,58 +90,7 @@ BSONLON = b("\x12") # 64bit int
 BSONMIN = b("\xFF") # Min key
 BSONMAX = b("\x7F") # Max key
 
-_function_alternatives = [
-    [],                                 # encoding
-    [],                                 # decoding
-    ]
 
-def _register_encoding_alternative(name, python, c):
-    _function_alternatives[0].append((name, python, c))
-
-def _register_decoding_alternative(name, python, c):
-    _function_alternatives[1].append((name, python, c))
-
-def _enable_function_alternatives(alternatives, on=True):
-    '''Return False for Python variants, True for C variants.'''
-    if on and not has_c():
-        return False
-    indx = 2 if on else 1
-    for alternative in alternatives:
-        globals()[alternative[0]] = alternative[indx]
-    return (True if on else False)
-
-def enable_c_encoding(on=True):
-    '''Enable/disable C extension for encoding.'''
-    global _use_c_encoding
-    _use_c_encoding = _enable_function_alternatives(_function_alternatives[0], on)
-    return _use_c_encoding
-
-def enable_c_decoding(on=True):
-    '''Enable/disable C extension for decoding.'''
-    global _use_c_decoding
-    _use_c_decoding = _enable_function_alternatives(_function_alternatives[1], on)
-    return _use_c_decoding
-
-def enable_c(on=True):
-    '''Enable/disable C extension for encoding/decoding.'''
-    enable_c_encoding(on)
-    enable_c_decoding(on)
-    return _use_c_encoding and _use_c_decoding
-
-def is_c_enabled(both=False):
-    '''Check if C extension is enabled for encoding and/or decoding.
-
-    :param both: If False (the default), the C extension is considered
-      enabled if it is enabled for any of the encoding or decoding
-      functions.
-
-      If True, the C extension is considered enabled if it is enabled
-      for both the encoding and decoding functions.
-    '''
-    if both:
-        return _use_c_encoding and _use_c_decoding
-    return _use_c_encoding or _use_c_decoding
-    
 def _get_int(data, position, as_class=None, tz_aware=False, unsigned=False):
     format = unsigned and "I" or "i"
     try:
@@ -374,10 +318,9 @@ def _bson_to_dict(data, as_class, tz_aware):
     elements = data[4:obj_size - 1]
     return (_elements_to_dict(elements, as_class, tz_aware), data[obj_size:])
 if _use_c:
-    _register_decoding_alternative('_bson_to_dict', _bson_to_dict, _cbson._bson_to_dict)
-    if use_c_decoding_as_default:
-        _bson_to_dict = _cbson._bson_to_dict
-        
+    _bson_to_dict = _cbson._bson_to_dict
+
+
 def _element_to_bson(key, value, check_keys, uuid_subtype):
     if not isinstance(key, basestring):
         raise InvalidDocument("documents must have only string keys, "
@@ -491,41 +434,26 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
                           type(value))
 
 
-# Contrary to the C implementation, the Python
-# implementation of :func:`_dict_to_bson` does not check
-# `document` for an explicit dict type and accepts any
-# object that implements key access and :meth:`iteritems`.
-#
-# Although this is really the better behavior, this check makes
-# sure, that both implementations act identically.
-dict_to_bson_ensure_c_compat = True
-
-def _dict_to_bson(dct, check_keys, uuid_subtype, top_level=True):
-    if dict_to_bson_ensure_c_compat and not isinstance(dct, dict):
-        # ensure that test_arbitrary_mapping_encode passes
-        raise TypeError("encoder expected a mapping type but got: %r" % dct)
-
+def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True):
     try:
         elements = []
-        if top_level and "_id" in dct:
-            elements.append(_element_to_bson("_id", dct["_id"], False, uuid_subtype))
-        for (key, value) in dct.iteritems():
+        if top_level and "_id" in dict:
+            elements.append(_element_to_bson("_id", dict["_id"], False, uuid_subtype))
+        for (key, value) in dict.iteritems():
             if not top_level or key != "_id":
                 elements.append(_element_to_bson(key, value, check_keys, uuid_subtype))
     except AttributeError:
-        raise TypeError("encoder expected a mapping type but got: %r" % dct)
+        raise TypeError("encoder expected a mapping type but got: %r" % dict)
 
     encoded = EMPTY.join(elements)
     length = len(encoded) + 5
     return struct.pack("<i", length) + encoded + ZERO
 if _use_c:
-    _register_encoding_alternative('_dict_to_bson', _dict_to_bson, _cbson._dict_to_bson)
-    if use_c_encoding_as_default:
-        _dict_to_bson = _cbson._dict_to_bson
+    _dict_to_bson = _cbson._dict_to_bson
 
 
 
-def _decode_all(data, as_class=dict, tz_aware=True):
+def decode_all(data, as_class=dict, tz_aware=True):
     """Decode BSON data to multiple documents.
 
     `data` must be a string of concatenated, valid, BSON-encoded
@@ -554,14 +482,8 @@ def _decode_all(data, as_class=dict, tz_aware=True):
         docs.append(_elements_to_dict(elements, as_class, tz_aware))
     return docs
 if _use_c:
-    _register_decoding_alternative('_decode_all', _decode_all, _cbson.decode_all)
-    if use_c_decoding_as_default:
-        _decode_all = _cbson.decode_all
+    decode_all = _cbson.decode_all
 
-def decode_all(data, as_class=dict, tz_aware=True):
-    # This is necessary to allow `from bson import decodeall` to work
-    # independent from enable_c().
-    return _decode_all(data, as_class, tz_aware)
 
 def is_valid(bson):
     """Check that the given string represents valid :class:`BSON` data.
