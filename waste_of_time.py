@@ -221,6 +221,8 @@ def waste_some_time_running_into_an_exception():
         except Exception:
             if first:
                 (t, e, tb) = sys.exc_info()
+                print("{0}{3:^{1}} {4:<{2}s}: ]{5!s}[".format(
+                    '#', 9, 15, ':DBG:', 'e', type(e)))
                 if hasattr(e, 'bson_error_parent'):
                     parent = e.bson_error_parent
                     if parent is not None:
