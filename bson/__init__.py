@@ -35,6 +35,15 @@ from bson.son import SON
 from bson.timestamp import Timestamp
 from bson.tz_util import utc
 
+# These functions must be avalaible when _cbson is imported
+def is_bson_hook_enabled():
+    return _enable_bson_hook
+
+def is_getstate_hook_enabled():
+    return _enable_getstate_hook
+
+def is_dict_hook_enabled():
+    return _enable_dict_hook
 
 try:
     from bson import _cbson
@@ -90,6 +99,32 @@ BSONLON = b("\x12") # 64bit int
 BSONMIN = b("\xFF") # Min key
 BSONMAX = b("\x7F") # Max key
 
+def enable_bson_hook(on=True):
+    '''Enable/disable calling :meth:`__bson__` for objects.
+    
+    The method can deliver any value.'''
+    global _enable_bson_hook
+    # Make sure, these are real boolean values
+    _enable_bson_hook = (True if on else False)
+_enable_bson_hook = False
+
+def enable_getstate_hook(on=True):
+    '''Enable/disable calling :meth:`__getstate__` for objects.
+    
+    The method must return a dictionary.'''
+    global _enable_getstate_hook
+    # Make sure, these are real boolean values
+    _enable_getstate_hook = (True if on else False)
+_enable_getstate_hook = False
+
+def enable_dict_hook(on=True):
+    '''Enable/disable calling :meth:`__dict__` for objects.
+    
+    The method must return a dictionary.'''
+    global _enable_dict_hook
+    # Make sure, these are real boolean values
+    _enable_dict_hook = (True if on else False)
+_enable_dict_hook = False
 
 def _get_int(data, position, as_class=None, tz_aware=False, unsigned=False):
     format = unsigned and "I" or "i"
@@ -320,6 +355,26 @@ def _bson_to_dict(data, as_class, tz_aware):
 if _use_c:
     _bson_to_dict = _cbson._bson_to_dict
 
+def _try_object_hooks(value, need_dict):
+    hooks = (
+        ('__bson__',     True,  is_bson_hook_enabled,     need_dict),
+        ('__getstate__', True,  is_getstate_hook_enabled, True),
+        ('__dict__',     False, is_dict_hook_enabled,     True),
+        )
+    for hook_def in hooks:
+        if hook_def[2]():
+            try:
+                hook = getattr(value, hook_def[0])
+            except AttributeError:
+                pass
+            else:
+                if hook_def[1]:
+                    result = hook()
+                else:
+                    result = hook
+                if not hook_def[3] or isinstance(result, dict):
+                    return (True, result)
+    return (False, None)
 
 def _element_to_bson(key, value, check_keys, uuid_subtype):
     if not isinstance(key, basestring):
@@ -430,10 +485,15 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
     if isinstance(value, MaxKey):
         return BSONMAX + name
 
+    valid, converted = _try_object_hooks(value, False)
+    if valid:
+        return _element_to_bson(key, converted, check_keys, uuid_subtype)
+
     raise InvalidDocument("cannot convert value of type %s to bson" %
                           type(value))
 
 
+# |:ws:| the argument name `dict` is really bad.
 def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True):
     try:
         elements = []
@@ -443,6 +503,9 @@ def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True):
             if not top_level or key != "_id":
                 elements.append(_element_to_bson(key, value, check_keys, uuid_subtype))
     except AttributeError:
+        valid, converted = _try_object_hooks(dict, False)
+        if valid:
+            return _dict_to_bson(converted, check_keys, uuid_subtype, top_level)
         raise TypeError("encoder expected a mapping type but got: %r" % dict)
 
     encoded = EMPTY.join(elements)

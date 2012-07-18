@@ -49,6 +49,9 @@ struct module_state {
     PyObject* MaxKey;
     PyObject* UTC;
     PyTypeObject* REType;
+    PyObject* is_bson_hook_enabled;
+    PyObject* is_getstate_hook_enabled;
+    PyObject* is_dict_hook_enabled;
 };
 
 #if PY_MAJOR_VERSION >= 3
@@ -255,7 +258,11 @@ static int _reload_python_objects(PyObject* module) {
         _reload_object(&state->MinKey, "bson.min_key", "MinKey") ||
         _reload_object(&state->MaxKey, "bson.max_key", "MaxKey") ||
         _reload_object(&state->UTC, "bson.tz_util", "utc") ||
-        _reload_object(&state->RECompile, "re", "compile")) {
+        _reload_object(&state->RECompile, "re", "compile") ||
+        _reload_object(&state->is_bson_hook_enabled, "bson", "is_bson_hook_enabled") ||
+        _reload_object(&state->is_getstate_hook_enabled, "bson", "is_getstate_hook_enabled") ||
+        _reload_object(&state->is_dict_hook_enabled, "bson", "is_dict_hook_enabled")
+        ) {
         return 1;
     }
     /* If we couldn't import uuid then we must be on 2.4. Just ignore. */
@@ -271,6 +278,52 @@ static int _reload_python_objects(PyObject* module) {
                                    PyString_FromString(""))->ob_type;
 #endif
     return 0;
+}
+
+/* try various hooks to obtain a state from an object */
+static PyObject* _try_object_hooks(PyObject* self, PyObject* object, char need_dict) {
+    struct module_state *state = GETSTATE(self);
+    struct hook {
+        char *hook;
+        char is_method;
+        PyObject* is_enabled;
+        char need_dict;
+    } hooks[] = {
+        { "__bson__",     1, state->is_bson_hook_enabled,     need_dict },
+        { "__getstate__", 1, state->is_getstate_hook_enabled, 1 },
+        { "__dict__",     0, state->is_dict_hook_enabled,     1 }
+    };
+    int count = sizeof(hooks) / sizeof(struct hook);
+    int indx = 0;
+
+    for (indx=0; indx<count; ++indx) {
+        struct hook* hook = &hooks[indx];
+        PyObject* _is_hook_enabled = PyObject_CallFunction(hook->is_enabled, NULL);
+        int is_hook_enabled = _is_hook_enabled == Py_True;
+        Py_XDECREF(_is_hook_enabled);
+        if (is_hook_enabled)
+        {
+            if (PyObject_HasAttrString(object, hook->hook))
+            {
+                PyObject* object_state = NULL;
+                if (hook->is_method) {
+                    object_state = PyObject_CallMethod(object, hook->hook, NULL);
+                } else {
+                    object_state = PyObject_GetAttrString(object, hook->hook);
+                }
+                if (PyErr_Occurred()) {
+                    /* propagate external exceptions */
+                    Py_XDECREF(object_state);
+                    return NULL;
+                }
+                if (object_state != NULL && (!hook->need_dict || PyDict_Check(object_state))) {
+                    return object_state;
+                }
+                Py_XDECREF(object_state);
+            }
+        }
+    }
+    return NULL;
 }
 
 static int write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byte,
@@ -774,19 +827,33 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
     } else if (PyObject_IsInstance(value, state->MaxKey)) {
         *(buffer_get_buffer(buffer) + type_byte) = 0x7F;
         return 1;
-    } else if (first_attempt) {
-        /* Try reloading the modules and having one more go at it. */
-        if (WARN(PyExc_RuntimeWarning, "couldn't encode - reloading python "
-                 "modules and trying again. if you see this without getting "
-                 "an InvalidDocument exception please see http://api.mongodb"
-                 ".org/python/current/faq.html#does-pymongo-work-with-mod-"
-                 "wsgi") == -1) {
+    } else {
+        PyObject* object_state = _try_object_hooks(self, value, 0);
+        if (object_state != NULL)
+        {
+            /* |:ws:| I don't think that this should contribute to the recursion depth. But to be on the safe side ... */
+            int result = write_element_to_buffer(self, buffer, type_byte, object_state, check_keys, uuid_subtype, first_attempt);
+            Py_DECREF(object_state);
+            return result;
+        }
+        if (PyErr_Occurred()) {
+            /* propagate hook exception. */
             return 0;
         }
-        if (_reload_python_objects(self)) {
-            return 0;
+        if (first_attempt) {
+            /* Try reloading the modules and having one more go at it. */
+            if (WARN(PyExc_RuntimeWarning, "couldn't encode - reloading python "
+                     "modules and trying again. if you see this without getting "
+                     "an InvalidDocument exception please see http://api.mongodb"
+                     ".org/python/current/faq.html#does-pymongo-work-with-mod-"
+                     "wsgi") == -1) {
+                return 0;
+            }
+            if (_reload_python_objects(self)) {
+                return 0;
+            }
+            return write_element_to_buffer(self, buffer, type_byte, value, check_keys, uuid_subtype, 0);
         }
-        return write_element_to_buffer(self, buffer, type_byte, value, check_keys, uuid_subtype, 0);
     }
     {
         PyObject* repr = PyObject_Repr(value);
@@ -970,6 +1037,20 @@ int write_dict(PyObject* self, buffer_t buffer, PyObject* dict,
     int length_location;
 
     if (!PyDict_Check(dict)) {
+        PyObject* object_dict = _try_object_hooks(self, dict, 1);
+        if (object_dict != NULL)
+        {
+            if (PyDict_Check(object_dict)) {
+                int result = write_dict(self, buffer, object_dict, check_keys, uuid_subtype, top_level);
+                Py_DECREF(object_dict);
+                return result;
+            }
+            Py_DECREF(object_dict);
+        }
+        if (PyErr_Occurred()) {
+            /* propagate hook exception. */
+            return 0;
+        }
         PyObject* repr = PyObject_Repr(dict);
 #if PY_MAJOR_VERSION >= 3
         PyObject* errmsg = PyUnicode_FromString("encoder expected a mapping type but got: ");
