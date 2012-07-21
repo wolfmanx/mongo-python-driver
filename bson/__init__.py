@@ -466,9 +466,11 @@ if _use_c:
 else:
     _context.setDefault('_dict_to_bson', _dict_to_bson)
 def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True):
-    return _context._dict_to_bson(dict, check_keys, uuid_subtype, top_level)
-
-
+    try:
+        return _context._dict_to_bson(dict, check_keys, uuid_subtype, top_level)
+    except TypeError:
+        # C extension behaves differently see https://jira.mongodb.org/browse/PYTHON-380
+        return _context._dict_to_bson(dict, check_keys, uuid_subtype)
 
 def decode_all(data, as_class=dict, tz_aware=True):
     """Decode BSON data to multiple documents.
