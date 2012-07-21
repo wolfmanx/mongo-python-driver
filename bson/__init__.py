@@ -90,6 +90,13 @@ BSONLON = b("\x12") # 64bit int
 BSONMIN = b("\xFF") # Min key
 BSONMAX = b("\x7F") # Max key
 
+# |:sec:| Context
+# |:sec:| Feature Context
+from bson.context import *
+_context = Context()
+_default_ctx = _context
+_context.setDefault('_use_c_encoding', _use_c)
+_context.setDefault('_use_c_decoding', _use_c)
 
 def _get_int(data, position, as_class=None, tz_aware=False, unsigned=False):
     format = unsigned and "I" or "i"
@@ -318,7 +325,12 @@ def _bson_to_dict(data, as_class, tz_aware):
     elements = data[4:obj_size - 1]
     return (_elements_to_dict(elements, as_class, tz_aware), data[obj_size:])
 if _use_c:
-    _bson_to_dict = _cbson._bson_to_dict
+    _context._register_decoding_alternative('_bson_to_dict', _bson_to_dict, _cbson._bson_to_dict)
+    _context.setDefault('_bson_to_dict', _cbson._bson_to_dict)
+else:
+    _context.setDefault('_bson_to_dict', _cbson._bson_to_dict)
+def _bson_to_dict(data, as_class, tz_aware):
+    return _context._bson_to_dict(data, as_class, tz_aware)
 
 
 def _element_to_bson(key, value, check_keys, uuid_subtype):
@@ -354,7 +366,7 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
         if not value.scope:
             length = struct.pack("<i", len(cstring))
             return BSONCOD + name + length + cstring
-        scope = _dict_to_bson(value.scope, False, uuid_subtype, False)
+        scope = _context._dict_to_bson(value.scope, False, uuid_subtype, False)
         full_length = struct.pack("<i", 8 + len(cstring) + len(scope))
         length = struct.pack("<i", len(cstring))
         return BSONCWS + name + full_length + length + cstring + scope
@@ -371,10 +383,10 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
         length = struct.pack("<i", len(cstring))
         return BSONSTR + name + length + cstring
     if isinstance(value, dict):
-        return BSONOBJ + name + _dict_to_bson(value, check_keys, uuid_subtype, False)
+        return BSONOBJ + name + _context._dict_to_bson(value, check_keys, uuid_subtype, False)
     if isinstance(value, (list, tuple)):
         as_dict = SON(zip([str(i) for i in range(len(value))], value))
-        return BSONARR + name + _dict_to_bson(as_dict, check_keys, uuid_subtype, False)
+        return BSONARR + name + _context._dict_to_bson(as_dict, check_keys, uuid_subtype, False)
     if isinstance(value, ObjectId):
         return BSONOID + name + value.binary
     if value is True:
@@ -449,7 +461,12 @@ def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True):
     length = len(encoded) + 5
     return struct.pack("<i", length) + encoded + ZERO
 if _use_c:
-    _dict_to_bson = _cbson._dict_to_bson
+    _context._register_encoding_alternative('_dict_to_bson', _dict_to_bson, _cbson._dict_to_bson)
+    _context.setDefault('_dict_to_bson', _cbson._dict_to_bson)
+else:
+    _context.setDefault('_dict_to_bson', _dict_to_bson)
+def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True):
+    return _context._dict_to_bson(dict, check_keys, uuid_subtype, top_level)
 
 
 
@@ -482,7 +499,12 @@ def decode_all(data, as_class=dict, tz_aware=True):
         docs.append(_elements_to_dict(elements, as_class, tz_aware))
     return docs
 if _use_c:
-    decode_all = _cbson.decode_all
+    _context._register_decoding_alternative('decode_all', decode_all, _cbson.decode_all)
+    _context.setDefault('decode_all', _cbson.decode_all)
+else:
+    _context.setDefault('decode_all', decode_all)
+def decode_all(data, as_class=dict, tz_aware=True):
+    return _context.decode_all(data, as_class, tz_aware)
 
 
 def is_valid(bson):
@@ -500,7 +522,7 @@ def is_valid(bson):
                         "of a subclass of %s" % (binary_type.__name__,))
 
     try:
-        (_, remainder) = _bson_to_dict(bson, dict, True)
+        (_, remainder) = _context._bson_to_dict(bson, dict, True)
         return remainder == EMPTY
     except:
         return False
@@ -530,7 +552,7 @@ class BSON(binary_type):
 
         .. versionadded:: 1.9
         """
-        return cls(_dict_to_bson(document, check_keys, uuid_subtype))
+        return cls(_context._dict_to_bson(document, check_keys, uuid_subtype))
 
     def decode(self, as_class=dict, tz_aware=False):
         """Decode this BSON data.
@@ -555,7 +577,7 @@ class BSON(binary_type):
 
         .. versionadded:: 1.9
         """
-        (document, _) = _bson_to_dict(self, as_class, tz_aware)
+        (document, _) = _context._bson_to_dict(self, as_class, tz_aware)
         return document
 
 
@@ -565,3 +587,8 @@ def has_c():
     .. versionadded:: 1.9
     """
     return _use_c
+
+# |:sec:| thread local context
+# thread local context with current settings
+_thread_ctx = ThreadContext()
+# |:sec:| end

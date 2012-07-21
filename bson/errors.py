@@ -38,3 +38,9 @@ class InvalidDocument(BSONError):
 class InvalidId(BSONError):
     """Raised when trying to create an ObjectId from invalid data.
     """
+
+
+class InvalidConfiguration(BSONError):
+    """Raised upon configuration errors.
+    E.g., when threading is enabled, after it was previously disabled.
+    """
