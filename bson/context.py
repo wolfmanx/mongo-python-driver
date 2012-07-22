@@ -23,6 +23,7 @@ __all__ = [
     'ThreadContext',
     'get_context',
     'set_context',
+    '_update_thread_context',
     'enable_threading',
     'is_threading_enabled',
     'lock',
@@ -47,10 +48,15 @@ class Context(object):                                     # ||:cls:||
         # instance configuration values
         ('_use_c_encoding', True),
         ('_use_c_decoding', True),
-        # function alternatives C extension/Python
+        # function alternatives BSON C extension/Python
         ('_dict_to_bson', None),
         ('_bson_to_dict', None),
         ('decode_all', None),
+        # function alternatives pymongo C extension/Python
+        ('_insert_message', None),
+        ('_update_message', None),
+        ('_query_message', None),
+        ('_get_more_message', None),
         ))
     _c_functions_ = [
         [],                                 # encoding
@@ -59,7 +65,7 @@ class Context(object):                                     # ||:cls:||
 
     # convenience lock
     lock = threading.RLock()
-    
+
     def __init__(self):
         for attr, value in self._defaults_.iteritems():
             if attr not in self._attrib_:
@@ -104,7 +110,7 @@ class Context(object):                                     # ||:cls:||
 
     def enable_c_encoding(self, on=True):
         '''Enable/disable C extension for encoding.
-        
+
         :returns: self for chaining.'''
         self._use_c_encoding = self._enable_c_functions_(self._c_functions_[0], on)
         return self
@@ -115,7 +121,7 @@ class Context(object):                                     # ||:cls:||
 
     def enable_c_decoding(self, on=True):
         '''Enable/disable C extension for decoding.
-        
+
         :returns: self for chaining.'''
         self._use_c_decoding = self._enable_c_functions_(self._c_functions_[1], on)
         return self
@@ -126,7 +132,7 @@ class Context(object):                                     # ||:cls:||
 
     def enable_c(self, on=True):
         '''Enable/disable C extension for encoding/decoding.
-        
+
         :returns: self for chaining.'''
         self.enable_c_encoding(on)
         self.enable_c_decoding(on)
@@ -148,17 +154,19 @@ class Context(object):                                     # ||:cls:||
 
     def setDefault(self, attr, value):
         '''Set attribute as default.
-        
+
         :returns: self for chaining.'''
+        if attr not in self._attrib_:
+            self._attrib_.append(attr)
         setattr(self, attr, value)
         return self
-        
+
     def __str__(self):
         s = []
         for attr in self._attrib_:
             s.append("{0:<19s}: {1!s}".format( attr, self[attr]))
         return '\n'.join(s)
-            
+
 class ChildContext(Context):                               # ||:cls:||
 
     def __init__(self, default=False):
@@ -174,7 +182,7 @@ class ChildContext(Context):                               # ||:cls:||
 
     def setDefault(self, attr, value):
         '''Set attribute as default.
-        
+
         :returns: self for chaining.'''
         _default_ctx = bson._default_ctx
         if attr not in _default_ctx._attrib_:
@@ -206,6 +214,10 @@ def set_context(context, default=False):                   # ||:fnc:||
         _context = bson._context
         _context.__setstate__(context.__getstate__())
 
+def _update_thread_context():
+    if not is_threading_enabled():
+        bson._thread_ctx.__setstate__(bson._default_ctx.__getstate__())
+
 # |:sec:| Threading Support
 def enable_threading(on=True):                             # ||:fnc:||
     '''If threading is disabled once, it can no longer be enabled.'''
@@ -230,7 +242,7 @@ def is_threading_enabled():                                # ||:fnc:||
 
 def lock(default=False):                                   # ||:fnc:||
     '''Acquire the lock for the (default) context.
-    
+
     :returns: (default) context copy.'''
     if default:
         _default_ctx = bson._default_ctx
@@ -253,24 +265,14 @@ def unlock(context=None, default=False):                   # ||:fnc:||
     else:
         _context = bson._context
         _context.lock.release()
-    
-# |:sec:| End of Context
 
+# |:sec:| End of Context
 
 # :ide: COMPILE: Run w/o args
 # . (progn (save-buffer) (compile (concat "cd .. && export PYTHONPATH=\"$( pwd )\" && python " (buffer-file-name) " ")))
 
 # :ide: +-#+
 # . Compile ()
-
-# :ide: QUO: _context = bson._context\n
-# . (insert "            _context = bson._context\n" )
-
-# :ide: QUO: _thread_ctx = bson._thread_ctx\n
-# . (insert "                _thread_ctx = bson._thread_ctx\n" )
-
-# :ide: QUO: _default_ctx = bson._default_ctx\n
-# . (insert "            _default_ctx = bson._default_ctx\n" )
 
 #
 # Local Variables:

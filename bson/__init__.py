@@ -90,13 +90,14 @@ BSONLON = b("\x12") # 64bit int
 BSONMIN = b("\xFF") # Min key
 BSONMAX = b("\x7F") # Max key
 
-# |:sec:| Context
 # |:sec:| Feature Context
 from bson.context import *
 _context = Context()
 _default_ctx = _context
+_thread_ctx = ThreadContext()
 _context.setDefault('_use_c_encoding', _use_c)
 _context.setDefault('_use_c_decoding', _use_c)
+# |:sec:| end
 
 def _get_int(data, position, as_class=None, tz_aware=False, unsigned=False):
     format = unsigned and "I" or "i"
@@ -590,7 +591,6 @@ def has_c():
     """
     return _use_c
 
-# |:sec:| thread local context
-# thread local context with current settings
-_thread_ctx = ThreadContext()
-# |:sec:| end
+# |:sec:| update global thread context
+_update_thread_context()
+# |:sec:|

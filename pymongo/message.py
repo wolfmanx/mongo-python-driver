@@ -89,7 +89,15 @@ def insert(collection_name, docs, check_keys,
         (request_id, insert_message) = __pack_message(2002, data)
         return (request_id, insert_message, max_bson_size)
 if _use_c:
-    insert = _cmessage._insert_message
+    bson._context._register_encoding_alternative('_insert_message', insert, _cmessage._insert_message)
+    bson._context.setDefault('_insert_message', _cmessage._insert_message)
+else:
+    bson._context.setDefault('_insert_message', insert)
+def insert(collection_name, docs, check_keys,
+           safe, last_error_args, continue_on_error, uuid_subtype):
+    return bson._context._insert_message(
+        collection_name, docs, check_keys,
+        safe, last_error_args, continue_on_error, uuid_subtype)
 
 
 def update(collection_name, upsert, multi,
@@ -116,7 +124,15 @@ def update(collection_name, upsert, multi,
         (request_id, update_message) = __pack_message(2001, data)
         return (request_id, update_message, len(encoded))
 if _use_c:
-    update = _cmessage._update_message
+    bson._context._register_encoding_alternative('_update_message', update, _cmessage._update_message)
+    bson._context.setDefault('_update_message', _cmessage._update_message)
+else:
+    bson._context.setDefault('_update_message', update)
+def update(collection_name, upsert, multi,
+           spec, doc, safe, last_error_args, check_keys, uuid_subtype):
+    return bson._context._update_message(
+        collection_name, upsert, multi,
+        spec, doc, safe, last_error_args, check_keys, uuid_subtype)
 
 
 def query(options, collection_name, num_to_skip,
@@ -138,7 +154,17 @@ def query(options, collection_name, num_to_skip,
     (request_id, query_message) = __pack_message(2004, data)
     return (request_id, query_message, max_bson_size)
 if _use_c:
-    query = _cmessage._query_message
+    bson._context._register_encoding_alternative('_query_message', query, _cmessage._query_message)
+    bson._context.setDefault('_query_message', _cmessage._query_message)
+else:
+    bson._context.setDefault('_query_message', query)
+def query(options, collection_name, num_to_skip,
+          num_to_return, query, field_selector=None,
+          uuid_subtype=OLD_UUID_SUBTYPE):
+    return bson._context._query_message(
+        options, collection_name, num_to_skip,
+        num_to_return, query, field_selector,
+        uuid_subtype)
 
 
 def get_more(collection_name, num_to_return, cursor_id):
@@ -150,7 +176,13 @@ def get_more(collection_name, num_to_return, cursor_id):
     data += struct.pack("<q", cursor_id)
     return __pack_message(2005, data)
 if _use_c:
-    get_more = _cmessage._get_more_message
+    bson._context._register_encoding_alternative('_get_more_message', get_more, _cmessage._get_more_message)
+    bson._context.setDefault('_get_more_message', _cmessage._get_more_message)
+else:
+    bson._context.setDefault('_get_more_message', get_more)
+def get_more(collection_name, num_to_return, cursor_id):
+    return bson._context._get_more_message(
+        collection_name, num_to_return, cursor_id)
 
 
 def delete(collection_name, spec, safe, last_error_args, uuid_subtype):
@@ -178,3 +210,5 @@ def kill_cursors(cursor_ids):
     for cursor_id in cursor_ids:
         data += struct.pack("<q", cursor_id)
     return __pack_message(2007, data)
+
+bson._update_thread_context()
