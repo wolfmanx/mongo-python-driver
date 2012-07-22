@@ -23,11 +23,15 @@ import os
 sys.path[0:0] = [""]
 
 if __name__ == '__main__':
-    # put build directory at beginning of path
+    # put build directories at beginning of path
     build_lib_dir = os.path.join(os.path.pardir)
-    if os.path.exists(os.path.join(build_lib_dir, 'test')) and build_lib_dir not in sys.path:
+    if (os.path.exists(os.path.join(build_lib_dir, 'test'))
+        and build_lib_dir not in sys.path):
         sys.path.insert(0, build_lib_dir)
-    build_lib_dir = ''.join(('build/lib.', sysconfig.get_platform(), '-', str(sys.version_info[0]), '.', str(sys.version_info[1])))
+    build_lib_dir = ''.join((os.path.join('build', 'lib.'),
+                             sysconfig.get_platform(), '-',
+                             str(sys.version_info[0]), '.',
+                             str(sys.version_info[1])))
     if os.path.exists(build_lib_dir) and build_lib_dir not in sys.path:
         sys.path.insert(0, build_lib_dir)
     build_lib_dir = os.path.join(os.path.pardir, build_lib_dir)
@@ -211,7 +215,7 @@ class TestBSONContext(unittest.TestCase):                  # ||:cls:||
         finally:
             bson.unlock(sv_context)
 
-    def test_enable_c_message(self):                                 # |:mth:|
+    def test_enable_c_message(self):                         # |:mth:|
 
         collection_name = 'test_enable_c_message'
         docs = [SON({'a': 'b'})]
@@ -227,7 +231,7 @@ class TestBSONContext(unittest.TestCase):                  # ||:cls:||
             continue_on_error = True
             result = pymongo.message.insert(
                     collection_name, docs, check_keys,
-                    safe, last_error_args, continue_on_error, uuid_subtype)[1]
+                    safe, last_error_args, continue_on_error, uuid_subtype, None)[1]
             result = result[:4] + result[9:]
             results.append(result)
 
@@ -237,7 +241,7 @@ class TestBSONContext(unittest.TestCase):                  # ||:cls:||
             doc = docs[0]
             result = pymongo.message.update(
                 collection_name, upsert, multi,
-                spec, doc, safe, last_error_args, check_keys, uuid_subtype)[1]
+                spec, doc, safe, last_error_args, check_keys, uuid_subtype, None)[1]
             result = result[:4] + result[9:]
             results.append(result)
 
@@ -248,13 +252,13 @@ class TestBSONContext(unittest.TestCase):                  # ||:cls:||
             result = pymongo.message.query(
                 options, collection_name, num_to_skip,
                 num_to_return, query, None,
-                uuid_subtype)[1]
+                uuid_subtype, None)[1]
             result = result[:4] + result[9:]
             results.append(result)
 
             cursor_id = 555
             result = pymongo.message.get_more(
-                collection_name, num_to_return, cursor_id)[1]
+                collection_name, num_to_return, cursor_id, None)[1]
             result = result[:4] + result[9:]
             results.append(result)
 
@@ -274,14 +278,72 @@ class TestBSONContext(unittest.TestCase):                  # ||:cls:||
         finally:
             bson.unlock(sv_context)
 
+    def test_explicit_context(self):                         # |:mth:|
+
+        collection_name = 'test_explicit_context'
+        docs = [SON({'a': 'b'})]
+        check_keys = True
+        safe = False
+        last_error_args = dict()
+        uuid_subtype = bson.OLD_UUID_SUBTYPE
+        continue_on_error = True
+
+        sv_context = bson.lock()
+        sv_check_context = bson.check_context
+        sv_message_check_context = pymongo.message.check_context
+        sv_message_insert = pymongo.message.insert
+        last_context_vector_was_c = []
+
+        def dbg_insert(*args, **kwargs):
+            ctx = args[7]
+            if ctx is not None:
+                #print(repr(ctx._insert_message))
+                last_context_vector_was_c.append(repr(ctx._insert_message).startswith('<built-in function'))
+            else:
+                last_context_vector_was_c.append(None)
+                import traceback
+                traceback.print_stack()
+            return sv_message_insert(*args, **kwargs)
+
+        try:
+            bson.check_context = bson.dbg_check_context_required
+            pymongo.message.check_context = bson.dbg_check_context_required
+            pymongo.message.insert = dbg_insert
+            context = bson.get_context()
+            context.enable_c(True)
+
+            result_c = pymongo.message.insert(
+                collection_name, docs, check_keys,
+                safe, last_error_args, continue_on_error, uuid_subtype, context)[1]
+            result_c = result_c[:4] + result_c[9:]
+            self.assertTrue(last_context_vector_was_c[-1])
+
+            context.enable_c(False)
+            result_p = pymongo.message.insert(
+                collection_name, docs, check_keys,
+                safe, last_error_args, continue_on_error, uuid_subtype, context)[1]
+            result_p = result_p[:4] + result_p[9:]
+            self.assertFalse(last_context_vector_was_c[-1])
+
+            self.assertEqual(result_c, result_p)
+
+        finally:
+            pymongo.message.insert = sv_message_insert
+            pymongo.message.check_context = sv_message_check_context
+            bson.check_context = sv_check_context
+            bson.unlock(sv_context)
+
 if __name__ == "__main__":
     unittest.main()
 
-# :ide: COMPILE: Run with python3
-# . (progn (save-buffer) (compile (concat "python3 ./" (file-name-nondirectory (buffer-file-name)) " ")))
-
 # :ide: COMPILE: Run w/o args
 # . (progn (save-buffer) (compile (concat "python ./" (file-name-nondirectory (buffer-file-name)) " ")))
+
+# :ide: COMPILE: Run with python3 --verbose
+# . (progn (save-buffer) (compile (concat "python3 ./" (file-name-nondirectory (buffer-file-name)) " --verbose")))
+
+# :ide: COMPILE: Run with --verbose
+# . (progn (save-buffer) (compile (concat "python ./" (file-name-nondirectory (buffer-file-name)) "  --verbose")))
 
 # :ide: +-#+
 # . Compile ()

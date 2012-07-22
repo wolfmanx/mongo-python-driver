@@ -97,6 +97,21 @@ _default_ctx = _context
 _thread_ctx = ThreadContext()
 _context.setDefault('_use_c_encoding', _use_c)
 _context.setDefault('_use_c_decoding', _use_c)
+
+check_context = lambda x: None
+
+def dbg_check_context(context):         # |:debug:|
+    '''bson.check_context = bson.dbg_check_context'''
+    if context is None:
+        return
+    return dbg_check_context_required(context)
+
+def dbg_check_context_required(context):
+    '''bson.check_context = bson.dbg_check_context_required'''
+    if not isinstance(context, Context):
+        import traceback
+        traceback.print_stack()
+        raise TypeError('not a BSON context' + repr(context))
 # |:sec:| end
 
 def _get_int(data, position, as_class=None, tz_aware=False, unsigned=False):
@@ -317,6 +332,7 @@ def _elements_to_dict(data, as_class, tz_aware):
         result[key] = value
     return result
 
+# |:todo:| add explicit context
 def _bson_to_dict(data, as_class, tz_aware):
     obj_size = struct.unpack("<i", data[:4])[0]
     if len(data) < obj_size:
@@ -334,7 +350,9 @@ def _bson_to_dict(data, as_class, tz_aware):
     return _context._bson_to_dict(data, as_class, tz_aware)
 
 
-def _element_to_bson(key, value, check_keys, uuid_subtype):
+def _element_to_bson(key, value, check_keys, uuid_subtype, context):
+    ctx = context or _context
+    check_context(ctx)
     if not isinstance(key, basestring):
         raise InvalidDocument("documents must have only string keys, "
                               "key was %r" % key)
@@ -367,7 +385,7 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
         if not value.scope:
             length = struct.pack("<i", len(cstring))
             return BSONCOD + name + length + cstring
-        scope = _context._dict_to_bson(value.scope, False, uuid_subtype, False)
+        scope = ctx._dict_to_bson(value.scope, False, uuid_subtype, False, context)
         full_length = struct.pack("<i", 8 + len(cstring) + len(scope))
         length = struct.pack("<i", len(cstring))
         return BSONCWS + name + full_length + length + cstring + scope
@@ -384,10 +402,10 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
         length = struct.pack("<i", len(cstring))
         return BSONSTR + name + length + cstring
     if isinstance(value, dict):
-        return BSONOBJ + name + _context._dict_to_bson(value, check_keys, uuid_subtype, False)
+        return BSONOBJ + name + ctx._dict_to_bson(value, check_keys, uuid_subtype, False, context)
     if isinstance(value, (list, tuple)):
         as_dict = SON(zip([str(i) for i in range(len(value))], value))
-        return BSONARR + name + _context._dict_to_bson(as_dict, check_keys, uuid_subtype, False)
+        return BSONARR + name + ctx._dict_to_bson(as_dict, check_keys, uuid_subtype, False, context)
     if isinstance(value, ObjectId):
         return BSONOID + name + value.binary
     if value is True:
@@ -437,7 +455,7 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
         return BSONRGX + name + _make_c_string(pattern, True) + \
             _make_c_string(flags)
     if isinstance(value, DBRef):
-        return _element_to_bson(key, value.as_doc(), False, uuid_subtype)
+        return _element_to_bson(key, value.as_doc(), False, uuid_subtype, context)
     if isinstance(value, MinKey):
         return BSONMIN + name
     if isinstance(value, MaxKey):
@@ -447,14 +465,14 @@ def _element_to_bson(key, value, check_keys, uuid_subtype):
                           type(value))
 
 
-def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True):
+def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True, context=None):
     try:
         elements = []
         if top_level and "_id" in dict:
-            elements.append(_element_to_bson("_id", dict["_id"], False, uuid_subtype))
+            elements.append(_element_to_bson("_id", dict["_id"], False, uuid_subtype, context))
         for (key, value) in dict.iteritems():
             if not top_level or key != "_id":
-                elements.append(_element_to_bson(key, value, check_keys, uuid_subtype))
+                elements.append(_element_to_bson(key, value, check_keys, uuid_subtype, context))
     except AttributeError:
         raise TypeError("encoder expected a mapping type but got: %r" % dict)
 
@@ -466,13 +484,16 @@ if _use_c:
     _context.setDefault('_dict_to_bson', _cbson._dict_to_bson)
 else:
     _context.setDefault('_dict_to_bson', _dict_to_bson)
-def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True):
+def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True, context=None):
+    ctx = context or _context
+    check_context(ctx)
     try:
-        return _context._dict_to_bson(dict, check_keys, uuid_subtype, top_level)
+        return ctx._dict_to_bson(dict, check_keys, uuid_subtype, top_level, context)
     except TypeError:
         # C extension behaves differently see https://jira.mongodb.org/browse/PYTHON-380
-        return _context._dict_to_bson(dict, check_keys, uuid_subtype)
+        return ctx._dict_to_bson(dict, check_keys, uuid_subtype, context)
 
+# |:todo:| add explicit context
 def decode_all(data, as_class=dict, tz_aware=True):
     """Decode BSON data to multiple documents.
 
@@ -536,7 +557,7 @@ class BSON(binary_type):
     """
 
     @classmethod
-    def encode(cls, document, check_keys=False, uuid_subtype=OLD_UUID_SUBTYPE):
+    def encode(cls, document, check_keys=False, uuid_subtype=OLD_UUID_SUBTYPE, context=None):
         """Encode a document to a new :class:`BSON` instance.
 
         A document can be any mapping type (like :class:`dict`).
@@ -555,7 +576,9 @@ class BSON(binary_type):
 
         .. versionadded:: 1.9
         """
-        return cls(_context._dict_to_bson(document, check_keys, uuid_subtype))
+        ctx = context or _context
+        check_context(ctx)
+        return cls(ctx._dict_to_bson(document, check_keys, uuid_subtype, ctx))
 
     def decode(self, as_class=dict, tz_aware=False):
         """Decode this BSON data.

@@ -29,11 +29,24 @@
 .. \||<-snap->|| skip
 .. \||<-snap->|| include ^index-header.snip$
 
-Provides a full vertical BSON context for encoding objects.
+Provides application specific C extension activation/deactivation and
+a full vertical BSON context for encoding objects.
+
+.. warning:: This is an expert module, which does not protect against
+             uninformed mistakes. If you wish to be protected, use the
+             official driver. If you do not want to take
+             responsibility for your actions, do not use this
+             extension.
 
 ==================================================
 :rem:`|||:sec:|||`\ Rationale
 ==================================================
+
+Currently, the C extensions for PyMongo/BSON can only be
+enabled/disabled with site-wide installation options.
+
+If the C extensions should be disabled (for e.g. mod_wsgi) virtual_env
+has to be used, if the standard installation should not be modified.
 
 SON manipulators can be used to automate object conversion, when
 writing into a MongoDB database.  However, SON manipulators only work
@@ -45,10 +58,46 @@ protocol, you are out of luck.
 There is currently no provision in the BSON encoder to allow graceful
 recovery on a per-element basis.
 
-This situation can be remedied by introducing a `BSON context` that
-allows to specify encoding/decoding parameters. One of the parameters
-is an object encoding hook that allows the user to deliver encodable
-data on a per-object basis.
+==================================================
+:rem:`|||:sec:|||`\ Caveat
+==================================================
+
+This extension works on the BSON encoding/decoding level.
+
+It is perfectly possible to postpone object conversion to that stage.
+This will, however, make SON manipulators for outgoing transformations
+effectively defunct below the top level.
+
+Currently there is only one SON manipulator active, namely
+:class:`pymongo.son_manipulator.ObjectIdInjector`, which provides an
+object ID for a document if necessary.
+
+This manipulator only requires the top level document to be expanded
+and will therefore work as expected.
+
+==================================================
+:rem:`|||:sec:|||`\ Implementation
+==================================================
+
+A BSON context :class:`bson.context.Context` is introduced, which
+allows to specify encoding/decoding parameters.
+
+This context is realized as application-wide default (global) context
+and (if :func:`bson.enable_threading` is used) as thread local
+context.
+
+Unlocked context management is provided by :func:`bson.get_context`
+and :func:`bson.set_context`.
+
+Context locking is provided by :func:`bson.lock` and
+:func:`bson.unlock`.
+
+==================================================
+:rem:`|||:sec:|||`\ TBD
+==================================================
+
+One of the parameters is an object encoding hook that allows the user
+to deliver encodable data on a per-object basis.
 
 The callback is modeled after the :func:`json.default` API.  Other
 options are object methods `__bson__`, `__getstate__`, `__dict__` as

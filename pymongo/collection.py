@@ -16,6 +16,7 @@
 
 import warnings
 
+import bson                             # |:debug:|
 from bson.binary import OLD_UUID_SUBTYPE, UUID_SUBTYPE
 from bson.code import Code
 from bson.son import SON
@@ -60,6 +61,9 @@ class Collection(common.BaseObject):
           - `**kwargs` (optional): additional keyword arguments will
             be passed as options for the create collection command
 
+        .. versionadded:: 2.2.1-fork
+           context attribute
+
         .. versionchanged:: 2.2
            Removed deprecated argument: options
 
@@ -100,6 +104,10 @@ class Collection(common.BaseObject):
         self.__database = database
         self.__name = unicode(name)
         self.__uuid_subtype = OLD_UUID_SUBTYPE
+        self.__context = None # or bson.get_context() # |:debug:|
+        if (self.__context is not None or # |:debug:|
+            not isinstance(self.__context, bson.Context)):
+            print('not a BSON context: ' + repr(self.__context))
         self.__full_name = u"%s.%s" % (self.__database.name, self.__name)
         if create or kwargs:
             self.__create(kwargs)
@@ -181,6 +189,18 @@ class Collection(common.BaseObject):
     uuid_subtype = property(__get_uuid_subtype, __set_uuid_subtype,
                             doc="""The BSON binary subtype for
                             a UUID used for this collection.""")
+
+    def __get_context(self):
+        return self.__context
+
+    def __set_context(self, context):
+        if not isinstance(context, bson.Context):
+            raise ConfigurationError("Not a valid BSON context.")
+        self.__context = context
+
+    context = property(__get_context, __set_context,
+                            doc="""The BSON encoding/decoding context
+                            used for this collection.""")
 
     def save(self, to_save, manipulate=True, safe=False, **kwargs):
         """Save a document in this collection.
@@ -303,7 +323,7 @@ class Collection(common.BaseObject):
         self.__database.connection._send_message(
             message.insert(self.__full_name, docs,
                            check_keys, safe, kwargs,
-                           continue_on_error, self.__uuid_subtype), safe)
+                           continue_on_error, self.__uuid_subtype, self.__context), safe)
 
         ids = [doc.get("_id", None) for doc in docs]
         return return_one and ids[0] or ids
@@ -402,7 +422,7 @@ class Collection(common.BaseObject):
         return self.__database.connection._send_message(
             message.update(self.__full_name, upsert, multi,
                            spec, document, safe, kwargs,
-                           _check_keys, self.__uuid_subtype), safe)
+                           _check_keys, self.__uuid_subtype, self.__context), safe)
 
     def drop(self):
         """Alias for :meth:`~pymongo.database.Database.drop_collection`.
@@ -416,7 +436,7 @@ class Collection(common.BaseObject):
         """
         self.__database.drop_collection(self.__name)
 
-    def remove(self, spec_or_id=None, safe=False, **kwargs):
+    def remove(self, spec_or_id=None, safe=False, context=None, **kwargs):
         """Remove a document(s) from this collection.
 
         .. warning:: Calls to :meth:`remove` should be performed with
@@ -475,10 +495,10 @@ class Collection(common.BaseObject):
             safe = True
             if not kwargs:
                 kwargs.update(self.get_lasterror_options())
-
+        
         return self.__database.connection._send_message(
             message.delete(self.__full_name, spec_or_id,
-                           safe, kwargs, self.__uuid_subtype), safe)
+                           safe, kwargs, self.__uuid_subtype, self.__context), safe)
 
     def find_one(self, spec_or_id=None, *args, **kwargs):
         """Get a single document from the database.
@@ -586,6 +606,7 @@ class Collection(common.BaseObject):
             :class:`~pymongo.connection.Connection`-level default
           - `read_preference` (optional): The read preference for
             this query.
+          - `context` (optional): encoding context for bson.BSON.encode.
 
         .. note:: The `manipulate` parameter may default to False in
            a future release.
@@ -948,6 +969,7 @@ class Collection(common.BaseObject):
 
         return self.__database.command("group", group,
                                        uuid_subtype=self.__uuid_subtype,
+                                       context=self.__context,
                                        read_preference=self.read_preference,
                                        slave_okay=self.slave_okay,
                                        _use_master=use_master)["retval"]
@@ -1051,6 +1073,7 @@ class Collection(common.BaseObject):
 
         response = self.__database.command("mapreduce", self.__name,
                                            uuid_subtype=self.__uuid_subtype,
+                                           context=self.__context,
                                            map=map, reduce=reduce,
                                            out=out, **kwargs)
 
@@ -1101,6 +1124,7 @@ class Collection(common.BaseObject):
 
         res = self.__database.command("mapreduce", self.__name,
                                       uuid_subtype=self.__uuid_subtype,
+                                      context=self.__context,
                                       read_preference=self.read_preference,
                                       slave_okay=self.slave_okay,
                                       _use_master=use_master,
@@ -1165,6 +1189,7 @@ class Collection(common.BaseObject):
         out = self.__database.command("findAndModify", self.__name,
                                       allowable_errors=[no_obj_error],
                                       uuid_subtype=self.__uuid_subtype,
+                                      context=self.__context,
                                       **kwargs)
 
         if not out['ok']:

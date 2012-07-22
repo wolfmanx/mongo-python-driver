@@ -44,6 +44,8 @@ EMPTY  = b("")
 MAX_INT32 = 2147483647
 MIN_INT32 = -2147483648
 
+import sys
+check_context = lambda x: None
 
 def __last_error(args):
     """Data to send to do a lastError.
@@ -67,7 +69,7 @@ def __pack_message(operation, data):
 
 
 def insert(collection_name, docs, check_keys,
-           safe, last_error_args, continue_on_error, uuid_subtype):
+           safe, last_error_args, continue_on_error, uuid_subtype, context):
     """Get an **insert** message.
     """
     max_bson_size = 0
@@ -76,7 +78,7 @@ def insert(collection_name, docs, check_keys,
         options += 1
     data = struct.pack("<i", options)
     data += bson._make_c_string(collection_name)
-    encoded = [bson.BSON.encode(doc, check_keys, uuid_subtype) for doc in docs]
+    encoded = [bson.BSON.encode(doc, check_keys, uuid_subtype, context) for doc in docs]
     if not encoded:
         raise InvalidOperation("cannot do an empty bulk insert")
     max_bson_size = max(map(len, encoded))
@@ -94,14 +96,16 @@ if _use_c:
 else:
     bson._context.setDefault('_insert_message', insert)
 def insert(collection_name, docs, check_keys,
-           safe, last_error_args, continue_on_error, uuid_subtype):
-    return bson._context._insert_message(
+           safe, last_error_args, continue_on_error, uuid_subtype, context):
+    ctx = context or bson._context
+    check_context(ctx)                                     # |:debug:|
+    return ctx._insert_message(
         collection_name, docs, check_keys,
-        safe, last_error_args, continue_on_error, uuid_subtype)
+        safe, last_error_args, continue_on_error, uuid_subtype, context)
 
 
 def update(collection_name, upsert, multi,
-           spec, doc, safe, last_error_args, check_keys, uuid_subtype):
+           spec, doc, safe, last_error_args, check_keys, uuid_subtype, context):
     """Get an **update** message.
     """
     options = 0
@@ -113,8 +117,8 @@ def update(collection_name, upsert, multi,
     data = __ZERO
     data += bson._make_c_string(collection_name)
     data += struct.pack("<i", options)
-    data += bson.BSON.encode(spec, False, uuid_subtype)
-    encoded = bson.BSON.encode(doc, check_keys, uuid_subtype)
+    data += bson.BSON.encode(spec, False, uuid_subtype, context)
+    encoded = bson.BSON.encode(doc, check_keys, uuid_subtype, context)
     data += encoded
     if safe:
         (_, update_message) = __pack_message(2001, data)
@@ -129,26 +133,28 @@ if _use_c:
 else:
     bson._context.setDefault('_update_message', update)
 def update(collection_name, upsert, multi,
-           spec, doc, safe, last_error_args, check_keys, uuid_subtype):
-    return bson._context._update_message(
+           spec, doc, safe, last_error_args, check_keys, uuid_subtype, context):
+    ctx = context or bson._context
+    check_context(ctx)                                     # |:debug:|
+    return ctx._update_message(
         collection_name, upsert, multi,
-        spec, doc, safe, last_error_args, check_keys, uuid_subtype)
+        spec, doc, safe, last_error_args, check_keys, uuid_subtype, context)
 
 
 def query(options, collection_name, num_to_skip,
           num_to_return, query, field_selector=None,
-          uuid_subtype=OLD_UUID_SUBTYPE):
+          uuid_subtype=OLD_UUID_SUBTYPE, context=None):
     """Get a **query** message.
     """
     data = struct.pack("<I", options)
     data += bson._make_c_string(collection_name)
     data += struct.pack("<i", num_to_skip)
     data += struct.pack("<i", num_to_return)
-    encoded = bson.BSON.encode(query, False, uuid_subtype)
+    encoded = bson.BSON.encode(query, False, uuid_subtype, context)
     data += encoded
     max_bson_size = len(encoded)
     if field_selector is not None:
-        encoded = bson.BSON.encode(field_selector, False, uuid_subtype)
+        encoded = bson.BSON.encode(field_selector, False, uuid_subtype, context)
         data += encoded
         max_bson_size = max(len(encoded), max_bson_size)
     (request_id, query_message) = __pack_message(2004, data)
@@ -160,11 +166,13 @@ else:
     bson._context.setDefault('_query_message', query)
 def query(options, collection_name, num_to_skip,
           num_to_return, query, field_selector=None,
-          uuid_subtype=OLD_UUID_SUBTYPE):
-    return bson._context._query_message(
+          uuid_subtype=OLD_UUID_SUBTYPE, context=None):
+    ctx = context or bson._context
+    check_context(ctx)                                     # |:debug:|
+    return ctx._query_message(
         options, collection_name, num_to_skip,
         num_to_return, query, field_selector,
-        uuid_subtype)
+        uuid_subtype, context)
 
 
 def get_more(collection_name, num_to_return, cursor_id):
@@ -180,18 +188,21 @@ if _use_c:
     bson._context.setDefault('_get_more_message', _cmessage._get_more_message)
 else:
     bson._context.setDefault('_get_more_message', get_more)
-def get_more(collection_name, num_to_return, cursor_id):
-    return bson._context._get_more_message(
+def get_more(collection_name, num_to_return, cursor_id, context):
+    ctx = context or bson._context
+    check_context(ctx)                                     # |:debug:|
+    return ctx._get_more_message(
         collection_name, num_to_return, cursor_id)
 
 
-def delete(collection_name, spec, safe, last_error_args, uuid_subtype):
+def delete(collection_name, spec, safe, last_error_args, uuid_subtype, context):
     """Get a **delete** message.
     """
+    check_context(context)              # |:debug:|
     data = __ZERO
     data += bson._make_c_string(collection_name)
     data += __ZERO
-    encoded = bson.BSON.encode(spec, False, uuid_subtype)
+    encoded = bson.BSON.encode(spec, False, uuid_subtype, context)
     data += encoded
     if safe:
         (_, remove_message) = __pack_message(2006, data)

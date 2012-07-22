@@ -14,6 +14,7 @@
 
 """Cursor class to iterate over Mongo query results."""
 
+import bson
 from bson.code import Code
 from bson.son import SON
 from pymongo import (helpers,
@@ -44,7 +45,7 @@ class Cursor(object):
                  max_scan=None, as_class=None, slave_okay=False,
                  await_data=False, partial=False, manipulate=True,
                  read_preference=ReadPreference.PRIMARY,
-                 _must_use_master=False, _uuid_subtype=None, **kwargs):
+                 _must_use_master=False, _uuid_subtype=None, context=None, **kwargs):
         """Create a new cursor.
 
         Should not be called directly by application developers - see
@@ -116,6 +117,10 @@ class Cursor(object):
         self.__tz_aware = collection.database.connection.tz_aware
         self.__must_use_master = _must_use_master
         self.__uuid_subtype = _uuid_subtype or collection.uuid_subtype
+        self.__context = context # or bson.get_context() # |:debug:|
+        if (self.__context is not None or # |:debug:|
+            not isinstance(self.__context, bson.Context)):
+            print('not a BSON context: ' + repr(self.__context))
         self.__query_flags = 0
 
         self.__data = []
@@ -181,6 +186,7 @@ class Cursor(object):
         copy.__read_preference = self.__read_preference
         copy.__must_use_master = self.__must_use_master
         copy.__uuid_subtype = self.__uuid_subtype
+        copy.__context = self.__context
         copy.__query_flags = self.__query_flags
         copy.__kwargs = self.__kwargs
         return copy
@@ -508,6 +514,7 @@ class Cursor(object):
         r = database.command("count", self.__collection.name,
                              allowable_errors=["ns missing"],
                              uuid_subtype = self.__uuid_subtype,
+                             context = self.__context,
                              **command)
         if r.get("errmsg", "") == "ns missing":
             return 0
@@ -552,6 +559,7 @@ class Cursor(object):
         return database.command("distinct",
                                 self.__collection.name,
                                 uuid_subtype = self.__uuid_subtype,
+                                context = self.__context,
                                 **options)["values"]
 
     def explain(self):
@@ -697,7 +705,9 @@ class Cursor(object):
                               self.__collection.full_name,
                               self.__skip, ntoreturn,
                               self.__query_spec(), self.__fields,
-                              self.__uuid_subtype))
+                              self.__uuid_subtype,
+                              self.__context
+                              ))
             if not self.__id:
                 self.__killed = True
         elif self.__id:  # Get More
@@ -710,7 +720,7 @@ class Cursor(object):
 
             self.__send_message(
                 message.get_more(self.__collection.full_name,
-                                 limit, self.__id))
+                                 limit, self.__id, self.__context))
 
         return len(self.__data)
 

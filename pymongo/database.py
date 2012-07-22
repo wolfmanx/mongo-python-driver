@@ -268,7 +268,7 @@ class Database(common.BaseObject):
 
     def command(self, command, value=1,
                 check=True, allowable_errors=[],
-                uuid_subtype=OLD_UUID_SUBTYPE, **kwargs):
+                uuid_subtype=OLD_UUID_SUBTYPE, context=None, **kwargs):
         """Issue a MongoDB command.
 
         Send command `command` to the database and return the
@@ -313,6 +313,7 @@ class Database(common.BaseObject):
             in this list will be ignored by error-checking
           - `uuid_subtype` (optional): The BSON binary subtype to use
             for a UUID used in this command.
+          - `context` (optional): The BSON encoding/decoding context.
           - `**kwargs` (optional): additional keyword arguments will
             be added to the command document before it is sent
 
@@ -338,7 +339,8 @@ class Database(common.BaseObject):
                                           self.read_preference),
             'slave_okay': kwargs.pop('slave_okay', self.slave_okay),
             '_must_use_master': kwargs.pop('_use_master', True),
-            '_uuid_subtype': uuid_subtype
+            '_uuid_subtype': uuid_subtype,
+            'context': context,
         }
 
         fields = kwargs.get('fields')

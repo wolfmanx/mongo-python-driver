@@ -109,7 +109,7 @@ static PyObject* elements_to_dict(PyObject* self, const char* string, int max,
 
 static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byte,
                                     PyObject* value, unsigned char check_keys,
-                                    unsigned char uuid_subtype, unsigned char first_attempt);
+                                    unsigned char uuid_subtype, unsigned char first_attempt, PyObject* context);
 
 /* Date stuff */
 static PyObject* datetime_from_millis(long long millis) {
@@ -276,12 +276,13 @@ static int _reload_python_objects(PyObject* module) {
 static int write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byte,
                                    PyObject* value, unsigned char check_keys,
                                    unsigned char uuid_subtype,
-                                   unsigned char first_attempt) {
+                                   unsigned char first_attempt,
+                                   PyObject* context) {
     int result;
     if(Py_EnterRecursiveCall(" while encoding an object to BSON "))
         return 0;
     result = _write_element_to_buffer(self, buffer, type_byte, value,
-                                      check_keys, uuid_subtype, first_attempt);
+                                      check_keys, uuid_subtype, first_attempt, context);
     Py_LeaveRecursiveCall();
     return result;
 }
@@ -293,7 +294,7 @@ static int write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byt
  * returns 0 on failure */
 static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byte,
                                     PyObject* value, unsigned char check_keys,
-                                    unsigned char uuid_subtype, unsigned char first_attempt) {
+                                    unsigned char uuid_subtype, unsigned char first_attempt, PyObject* context) {
     struct module_state *state = GETSTATE(self);
 
     if (PyBool_Check(value)) {
@@ -349,7 +350,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         return 1;
     } else if (PyDict_Check(value)) {
         *(buffer_get_buffer(buffer) + type_byte) = 0x03;
-        return write_dict(self, buffer, value, check_keys, uuid_subtype, 0);
+        return write_dict(self, buffer, value, check_keys, uuid_subtype, 0, context);
     } else if (PyList_Check(value) || PyTuple_Check(value)) {
         int start_position,
             length_location,
@@ -390,7 +391,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
 
             item_value = PySequence_GetItem(value, i);
             if (!write_element_to_buffer(self, buffer, list_type_byte,
-                                         item_value, check_keys, uuid_subtype, 1)) {
+                                         item_value, check_keys, uuid_subtype, 1, context)) {
                 Py_DECREF(item_value);
                 return 0;
             }
@@ -527,7 +528,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
             return 0;
         }
 
-        if (!write_dict(self, buffer, scope, 0, uuid_subtype, 0)) {
+        if (!write_dict(self, buffer, scope, 0, uuid_subtype, 0, context)) {
             Py_DECREF(scope);
             return 0;
         }
@@ -628,7 +629,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         if (!as_doc) {
             return 0;
         }
-        if (!write_dict(self, buffer, as_doc, 0, uuid_subtype, 0)) {
+        if (!write_dict(self, buffer, as_doc, 0, uuid_subtype, 0, context)) {
             Py_DECREF(as_doc);
             return 0;
         }
@@ -786,7 +787,7 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
         if (_reload_python_objects(self)) {
             return 0;
         }
-        return write_element_to_buffer(self, buffer, type_byte, value, check_keys, uuid_subtype, 0);
+        return write_element_to_buffer(self, buffer, type_byte, value, check_keys, uuid_subtype, 0, context);
     }
     {
         PyObject* repr = PyObject_Repr(value);
@@ -847,7 +848,7 @@ static int check_key_name(const char* name,
  * Returns 0 on failure */
 int write_pair(PyObject* self, buffer_t buffer, const char* name, Py_ssize_t name_length,
                PyObject* value, unsigned char check_keys,
-               unsigned char uuid_subtype, unsigned char allow_id) {
+               unsigned char uuid_subtype, unsigned char allow_id, PyObject* context) {
     int type_byte;
 
     /* Don't write any _id elements unless we're explicitly told to -
@@ -869,7 +870,7 @@ int write_pair(PyObject* self, buffer_t buffer, const char* name, Py_ssize_t nam
         return 0;
     }
     if (!write_element_to_buffer(self, buffer, type_byte, value,
-                                 check_keys, uuid_subtype, 1)) {
+                                 check_keys, uuid_subtype, 1, context)) {
         return 0;
     }
     return 1;
@@ -878,7 +879,7 @@ int write_pair(PyObject* self, buffer_t buffer, const char* name, Py_ssize_t nam
 int decode_and_write_pair(PyObject* self, buffer_t buffer,
                           PyObject* key, PyObject* value,
                           unsigned char check_keys,
-                          unsigned char uuid_subtype, unsigned char top_level) {
+                          unsigned char uuid_subtype, unsigned char top_level, PyObject* context) {
     PyObject* encoded;
     if (PyUnicode_Check(key)) {
         result_t status;
@@ -946,11 +947,11 @@ int decode_and_write_pair(PyObject* self, buffer_t buffer,
 #if PY_MAJOR_VERSION >= 3
     if (!write_pair(self, buffer, PyBytes_AsString(encoded),
                     PyBytes_Size(encoded), value,
-                    check_keys, uuid_subtype, !top_level)) {
+                    check_keys, uuid_subtype, !top_level, context)) {
 #else
     if (!write_pair(self, buffer, PyString_AsString(encoded),
                     PyString_Size(encoded), value,
-                    check_keys, uuid_subtype, !top_level)) {
+                    check_keys, uuid_subtype, !top_level, context)) {
 #endif
         Py_DECREF(encoded);
         return 0;
@@ -962,7 +963,7 @@ int decode_and_write_pair(PyObject* self, buffer_t buffer,
 
 /* returns 0 on failure */
 int write_dict(PyObject* self, buffer_t buffer, PyObject* dict,
-               unsigned char check_keys, unsigned char uuid_subtype, unsigned char top_level) {
+               unsigned char check_keys, unsigned char uuid_subtype, unsigned char top_level, PyObject* context) {
     PyObject* key;
     PyObject* iter;
     char zero = 0;
@@ -998,7 +999,7 @@ int write_dict(PyObject* self, buffer_t buffer, PyObject* dict,
         if (_id) {
             /* Don't bother checking keys, but do make sure we're allowed to
              * write _id */
-            if (!write_pair(self, buffer, "_id", 3, _id, 0, uuid_subtype, 1)) {
+            if (!write_pair(self, buffer, "_id", 3, _id, 0, uuid_subtype, 1, context)) {
                 return 0;
             }
         }
@@ -1017,7 +1018,7 @@ int write_dict(PyObject* self, buffer_t buffer, PyObject* dict,
             return 0;
         }
         if (!decode_and_write_pair(self, buffer, key, value,
-                                   check_keys, uuid_subtype, top_level)) {
+                                   check_keys, uuid_subtype, top_level, context)) {
             Py_DECREF(key);
             Py_DECREF(iter);
             return 0;
@@ -1040,9 +1041,10 @@ static PyObject* _cbson_dict_to_bson(PyObject* self, PyObject* args) {
     PyObject* result;
     unsigned char check_keys;
     unsigned char uuid_subtype;
+    PyObject* context;
     buffer_t buffer;
 
-    if (!PyArg_ParseTuple(args, "Obb", &dict, &check_keys, &uuid_subtype)) {
+    if (!PyArg_ParseTuple(args, "ObbO", &dict, &check_keys, &uuid_subtype, &context)) {
         return NULL;
     }
 
@@ -1052,7 +1054,7 @@ static PyObject* _cbson_dict_to_bson(PyObject* self, PyObject* args) {
         return NULL;
     }
 
-    if (!write_dict(self, buffer, dict, check_keys, uuid_subtype, 1)) {
+    if (!write_dict(self, buffer, dict, check_keys, uuid_subtype, 1, context)) {
         buffer_free(buffer);
         return NULL;
     }
