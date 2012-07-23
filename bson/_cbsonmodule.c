@@ -273,6 +273,78 @@ static int _reload_python_objects(PyObject* module) {
     return 0;
 }
 
+/* try various hooks to obtain a state from an object */
+static PyObject* _try_object_hooks(PyObject* self, PyObject* object, char need_dict, PyObject* context) {
+    PyObject* release_context = NULL;
+    PyObject* hook_defs;
+    int hook_defs_ct;
+    int hook_indx;
+    char done = 0;
+    PyObject* object_state = NULL;
+    if (context == NULL || context == Py_None) {
+        if (_reload_object(&context, "bson", "_context") != 0) {
+            return NULL;
+        }
+        release_context = context;
+    }
+    hook_defs = PyObject_GetAttrString(context, "object_state_hooks");
+    if (hook_defs == NULL) {
+        PyErr_Clear();
+        Py_XDECREF(release_context);
+        return NULL;
+    }
+    hook_defs_ct = PySequence_Size(hook_defs);
+    for (hook_indx=0; hook_indx<hook_defs_ct; ++hook_indx) {
+        PyObject* hook_def = PySequence_GetItem(hook_defs, hook_indx);
+        if (hook_def != NULL) {
+            PyObject* hook_name = PySequence_GetItem(hook_def, 0);
+            PyObject* _dict_required = PySequence_GetItem(hook_def, 1);
+            char dict_required = (need_dict || _dict_required == Py_True);
+            Py_XDECREF(_dict_required);
+            if (PyErr_Occurred()) {
+                /* propagate external exceptions */
+                Py_XDECREF(hook_name);
+                Py_XDECREF(hook_def);
+                break;
+            }
+            if (PyObject_HasAttr(object, hook_name)) {
+                PyObject* hook = PyObject_GetAttr(object, hook_name);
+                if ( hook != NULL ) {
+                    if (PyCallable_Check(hook)) {
+                        object_state = PyObject_CallObject(hook, NULL);
+                    } else {
+                        object_state = hook;
+                        hook = NULL;
+                    }
+                    if (PyErr_Occurred()) {
+                        /* propagate external exceptions */
+                        Py_XDECREF(object_state);
+                        object_state = NULL;
+                        done = 1;
+                    }
+                    if (done 
+                        || (object_state != NULL
+                            && (!dict_required
+                                || PyDict_Check(object_state)))) {
+                        Py_XDECREF(hook);
+                        Py_DECREF(hook_name);
+                        Py_DECREF(hook_def);
+                        break;
+                    }
+                    Py_XDECREF(object_state);
+                    Py_XDECREF(hook);
+                    object_state = NULL;
+                }
+            }
+            Py_DECREF(hook_name);
+            Py_DECREF(hook_def);
+        }
+    }
+    Py_DECREF(hook_defs);
+    Py_XDECREF(release_context);
+    return object_state;
+}
+
 static int write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byte,
                                    PyObject* value, unsigned char check_keys,
                                    unsigned char uuid_subtype,
@@ -775,19 +847,33 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
     } else if (PyObject_IsInstance(value, state->MaxKey)) {
         *(buffer_get_buffer(buffer) + type_byte) = 0x7F;
         return 1;
-    } else if (first_attempt) {
-        /* Try reloading the modules and having one more go at it. */
-        if (WARN(PyExc_RuntimeWarning, "couldn't encode - reloading python "
-                 "modules and trying again. if you see this without getting "
-                 "an InvalidDocument exception please see http://api.mongodb"
-                 ".org/python/current/faq.html#does-pymongo-work-with-mod-"
-                 "wsgi") == -1) {
+    } else {
+        PyObject* object_state = _try_object_hooks(self, value, 0, context);
+        if (object_state != NULL)
+        {
+            /* |:ws:| I don't think that this should contribute to the recursion depth. But to be on the safe side ... */
+            int result = write_element_to_buffer(self, buffer, type_byte, object_state, check_keys, uuid_subtype, first_attempt, context);
+            Py_DECREF(object_state);
+            return result;
+        }
+        if (PyErr_Occurred()) {
+            /* propagate hook exception. */
             return 0;
         }
-        if (_reload_python_objects(self)) {
-            return 0;
+        if (first_attempt) {
+            /* Try reloading the modules and having one more go at it. */
+            if (WARN(PyExc_RuntimeWarning, "couldn't encode - reloading python "
+                     "modules and trying again. if you see this without getting "
+                     "an InvalidDocument exception please see http://api.mongodb"
+                     ".org/python/current/faq.html#does-pymongo-work-with-mod-"
+                     "wsgi") == -1) {
+                return 0;
+            }
+            if (_reload_python_objects(self)) {
+                return 0;
+            }
+            return write_element_to_buffer(self, buffer, type_byte, value, check_keys, uuid_subtype, 0, context);
         }
-        return write_element_to_buffer(self, buffer, type_byte, value, check_keys, uuid_subtype, 0, context);
     }
     {
         PyObject* repr = PyObject_Repr(value);
@@ -971,6 +1057,20 @@ int write_dict(PyObject* self, buffer_t buffer, PyObject* dict,
     int length_location;
 
     if (!PyDict_Check(dict)) {
+        PyObject* object_dict = _try_object_hooks(self, dict, 1, context);
+        if (object_dict != NULL)
+        {
+            if (PyDict_Check(object_dict)) {
+                int result = write_dict(self, buffer, object_dict, check_keys, uuid_subtype, top_level, context);
+                Py_DECREF(object_dict);
+                return result;
+            }
+            Py_DECREF(object_dict);
+        }
+        if (PyErr_Occurred()) {
+            /* propagate hook exception. */
+            return 0;
+        }
         PyObject* repr = PyObject_Repr(dict);
 #if PY_MAJOR_VERSION >= 3
         PyObject* errmsg = PyUnicode_FromString("encoder expected a mapping type but got: ");

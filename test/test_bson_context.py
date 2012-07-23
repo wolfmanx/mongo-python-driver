@@ -51,6 +51,8 @@ import pymongo.message
 
 PY3 = sys.version_info[0] == 3
 
+import bson.context as bson_context
+
 class TestBSONContext(unittest.TestCase):                  # ||:cls:||
 
     def setUp(self):                                         # |:mth:|
@@ -74,7 +76,7 @@ class TestBSONContext(unittest.TestCase):                  # ||:cls:||
                 context = bson.get_context()
                 bson.unlock(sv_context)
 
-        sv_can_enable_threading = bson.context._can_enable_threading
+        sv_can_enable_threading = bson_context._can_enable_threading
 
         # threading cannot be re-enabled
         bson.enable_threading(False)
@@ -88,7 +90,7 @@ class TestBSONContext(unittest.TestCase):                  # ||:cls:||
         bson.unlock(sv_context)
 
         # global thread lock
-        bson.context._can_enable_threading = True
+        bson_context._can_enable_threading = True
         bson.enable_threading(True)
         sv_context = bson.lock()
         context = bson.get_context()
@@ -101,7 +103,7 @@ class TestBSONContext(unittest.TestCase):                  # ||:cls:||
         bson.unlock(sv_context)
 
         # restore _can_enable_threading
-        bson.context._can_enable_threading = sv_can_enable_threading
+        bson_context._can_enable_threading = sv_can_enable_threading
 
     def test_enable_c(self):                                 # |:mth:|
         # Make sure that all possible combinations of C/Python encoding/decoding

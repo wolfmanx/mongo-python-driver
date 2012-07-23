@@ -13,10 +13,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+'''Context support for BSON codec.
+'''
 
 import bson
 from bson.son import SON
-from bson.errors import InvalidConfiguration
+try:
+    from bson.errors import InvalidConfiguration
+except ImportError:
+    import bson.errors
+    exec('''
+class InvalidConfiguration(BSONError):
+    """Raised upon configuration errors.
+    E.g., when threading is enabled, after it was previously disabled.
+    """
+    ''', vars(bson.errors))
+    from bson.errors import InvalidConfiguration
 
 __all__ = [
     'Context',
@@ -57,6 +69,14 @@ class Context(object):                                     # ||:cls:||
         ('_update_message', None),
         ('_query_message', None),
         ('_get_more_message', None),
+        # object_state_hooks:
+        # [(attribute_name, dict_required), ...]
+        # If attribute provides __call__ interface, it is invoked as a method,
+        # otherwise the attribute is used as is.
+        # e.g.
+        # [('__bson__', False), ('__getstate__', True), ('__dict__', True)]
+        # ('object_state_hooks', [('__bson__', False)]),
+        ('object_state_hooks', []),
         ))
     _c_functions_ = [
         [],                                 # encoding
@@ -151,6 +171,36 @@ class Context(object):                                     # ||:cls:||
         if both:
             return self._use_c_encoding and self._use_c_decoding
         return self._use_c_encoding or self._use_c_decoding
+
+    def addHook(self, hook, require_dict=True):
+        '''Add hook to :attr:`object_state_hooks`.
+
+        :returns: self for chaining.'''
+        oshd = SON(self.object_state_hooks)
+        if hook not in oshd:
+            oshd[hook] = require_dict
+            self.object_state_hooks = list(oshd.items())
+        return self
+
+    def removeHook(self, hook):
+        '''Remove hook from :attr:`object_state_hooks`.
+
+        :returns: self for chaining.'''
+        oshd = SON(self.object_state_hooks)
+        if hook in oshd:
+            del(oshd[hook])
+            self.object_state_hooks = list(oshd.items())
+        return self
+
+    def enable_hook(self, on=True, hook='__getstate__', require_dict=True):
+        '''Enable/disable object state hook.
+
+        :returns: self for chaining.'''
+        if on:
+            self.addHook(hook, require_dict)
+        else:
+            self.removeHook(hook)
+        return self
 
     def setDefault(self, attr, value):
         '''Set attribute as default.
@@ -265,6 +315,20 @@ def unlock(context=None, default=False):                   # ||:fnc:||
     else:
         _context = bson._context
         _context.lock.release()
+
+def export_to_bson():
+    '''Patch support for original BSON codec.'''
+    for attr in __all__:
+        if not hasattr(bson, attr):
+            setattr(bson, attr, globals()[attr])
+    if not hasattr(bson, '_context'):
+        exec('''
+_context = Context()
+_default_ctx = _context
+_thread_ctx = ThreadContext()
+_context.setDefault('_use_c_encoding', _use_c)
+_context.setDefault('_use_c_decoding', _use_c)
+''', vars(bson))
 
 # |:sec:| End of Context
 

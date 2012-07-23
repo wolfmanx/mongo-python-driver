@@ -332,7 +332,7 @@ def _elements_to_dict(data, as_class, tz_aware):
         result[key] = value
     return result
 
-# |:todo:| add explicit context
+# |:check:| add explicit context?
 def _bson_to_dict(data, as_class, tz_aware):
     obj_size = struct.unpack("<i", data[:4])[0]
     if len(data) < obj_size:
@@ -345,10 +345,28 @@ if _use_c:
     _context._register_decoding_alternative('_bson_to_dict', _bson_to_dict, _cbson._bson_to_dict)
     _context.setDefault('_bson_to_dict', _cbson._bson_to_dict)
 else:
-    _context.setDefault('_bson_to_dict', _cbson._bson_to_dict)
+    _context.setDefault('_bson_to_dict', _bson_to_dict)
 def _bson_to_dict(data, as_class, tz_aware):
     return _context._bson_to_dict(data, as_class, tz_aware)
 
+def _try_object_hooks(value, need_dict, context):
+    ctx = context or _context
+    check_context(ctx)
+    hook_defs = ctx.object_state_hooks
+    for hook_def in hook_defs:
+        dict_required = need_dict or hook_def[1]
+        try:
+            hook = getattr(value, hook_def[0])
+        except AttributeError:
+            pass
+        else:
+            if callable(hook):
+                result = hook()
+            else:
+                result = hook
+            if not dict_required or isinstance(result, dict):
+                return (True, result)
+    return (False, None)
 
 def _element_to_bson(key, value, check_keys, uuid_subtype, context):
     ctx = context or _context
@@ -402,10 +420,16 @@ def _element_to_bson(key, value, check_keys, uuid_subtype, context):
         length = struct.pack("<i", len(cstring))
         return BSONSTR + name + length + cstring
     if isinstance(value, dict):
-        return BSONOBJ + name + ctx._dict_to_bson(value, check_keys, uuid_subtype, False, context)
+        try:
+            return BSONOBJ + name + ctx._dict_to_bson(value, check_keys, uuid_subtype, False, context)
+        except TypeError:
+            return BSONOBJ + name + ctx._dict_to_bson(value, check_keys, uuid_subtype, context)
     if isinstance(value, (list, tuple)):
         as_dict = SON(zip([str(i) for i in range(len(value))], value))
-        return BSONARR + name + ctx._dict_to_bson(as_dict, check_keys, uuid_subtype, False, context)
+        try:
+            return BSONARR + name + ctx._dict_to_bson(as_dict, check_keys, uuid_subtype, False, context)
+        except TypeError:
+            return BSONARR + name + ctx._dict_to_bson(as_dict, check_keys, uuid_subtype, context)
     if isinstance(value, ObjectId):
         return BSONOID + name + value.binary
     if value is True:
@@ -461,11 +485,17 @@ def _element_to_bson(key, value, check_keys, uuid_subtype, context):
     if isinstance(value, MaxKey):
         return BSONMAX + name
 
+    valid, converted = _try_object_hooks(value, False, context)
+    if valid:
+        return _element_to_bson(key, converted, check_keys, uuid_subtype, context)
+
     raise InvalidDocument("cannot convert value of type %s to bson" %
                           type(value))
 
 
 def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True, context=None):
+    ctx = context or _context
+    check_context(ctx)
     try:
         elements = []
         if top_level and "_id" in dict:
@@ -474,6 +504,9 @@ def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True, context=None):
             if not top_level or key != "_id":
                 elements.append(_element_to_bson(key, value, check_keys, uuid_subtype, context))
     except AttributeError:
+        valid, converted = _try_object_hooks(dict, True, context)
+        if valid:
+            return ctx._dict_to_bson(converted, check_keys, uuid_subtype, top_level, context)
         raise TypeError("encoder expected a mapping type but got: %r" % dict)
 
     encoded = EMPTY.join(elements)
