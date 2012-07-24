@@ -92,6 +92,15 @@ and :func:`bson.set_context`.
 Context locking is provided by :func:`bson.lock` and
 :func:`bson.unlock`.
 
+==========================================================
+:rem:`|||:sec:|||`\ PyMongo/BSON Context Extension Patcher
+==========================================================
+
+- Copy pymongo_context.py
+- Copy bson/context.py to bson_context.py
+- import pymongo_context
+- See waste_of_time.py for an example.
+
 ==================================================
 :rem:`|||:sec:|||`\ TBD
 ==================================================

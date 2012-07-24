@@ -44,6 +44,16 @@ __all__ = [
 
 _can_enable_threading = True
 
+try:
+    getattr(dict(), 'iteritems')
+    ditems  = lambda d: getattr(d, 'iteritems')()
+    dkeys   = lambda d: getattr(d, 'iterkeys')()
+    dvalues = lambda d: getattr(d, 'itervalues')()
+except AttributeError:
+    ditems  = lambda d: getattr(d, 'items')()
+    dkeys   = lambda d: getattr(d, 'keys')()
+    dvalues = lambda d: getattr(d, 'values')()
+
 # |:sec:| Feature Context
 # Allow different threads to have independent configurations
 # E.g., enable/disable C extension independently
@@ -69,6 +79,7 @@ class Context(object):                                     # ||:cls:||
         ('_update_message', None),
         ('_query_message', None),
         ('_get_more_message', None),
+
         # object_state_hooks:
         # [(attribute_name, dict_required), ...]
         # If attribute provides __call__ interface, it is invoked as a method,
@@ -77,6 +88,11 @@ class Context(object):                                     # ||:cls:||
         # [('__bson__', False), ('__getstate__', True), ('__dict__', True)]
         # ('object_state_hooks', [('__bson__', False)]),
         ('object_state_hooks', []),
+        
+        # document class, when context is used as `as_class` parameter
+        # for decoding.
+        ('as_class', SON),
+        ('_pyjsmo_context_key', '_$context'),
         ))
     _c_functions_ = [
         [],                                 # encoding
@@ -86,11 +102,29 @@ class Context(object):                                     # ||:cls:||
     # convenience lock
     lock = threading.RLock()
 
-    def __init__(self):
-        for attr, value in self._defaults_.iteritems():
+    def __call__(self, *args, **kwargs):
+        '''Document class generator.
+
+        This makes :class:`Context` suitable for parameter `as_class`
+        of decoding functions.
+
+        Attribute :attr:`as_class` is used as type to create a
+        document object instance.
+
+        Its constructor is called with a dict argument:
+
+            self.as_class({self._pyjsmo_context_key: self})
+        '''
+        document = self.as_class({self._pyjsmo_context_key: self})
+        return document
+
+    def __init__(self, context=None):
+        for attr, value in ditems(self._defaults_):
             if attr not in self._attrib_:
                 self._attrib_.append(attr)
             setattr(self, attr, copy.deepcopy(value))
+        if context is not None:
+            self.__setstate__(context.__getstate__())
 
     def __getitem__(self, key):
         # |:check:| this renders a borrowed reference?
@@ -109,7 +143,7 @@ class Context(object):                                     # ||:cls:||
 
     def __setstate__(self, state):
         self.lock.acquire()
-        for attr, value in state.iteritems():
+        for attr, value in ditems(state):
             setattr(self, attr, value)
         self.lock.release()
 
@@ -275,12 +309,16 @@ def enable_threading(on=True):                             # ||:fnc:||
     if on:
         if not is_threading_enabled():
             if _can_enable_threading:
+                if threading.active_count() > 1:
+                    raise InvalidConfiguration(
+                        'BSON thread support can only be enabled in main thread'
+                        ' (active threads: ' + str(threading.active_count()) + ')')
                 _default_ctx = bson._default_ctx
                 _thread_ctx = bson._thread_ctx
                 _thread_ctx.__setstate__(_default_ctx.__getstate__())
                 bson._context = _thread_ctx
             else:
-                raise InvalidConfiguration('cannot enable BSON threading')
+                raise InvalidConfiguration('BSON thread support is disabled')
     else:
         if is_threading_enabled():
             _default_ctx = bson._default_ctx
