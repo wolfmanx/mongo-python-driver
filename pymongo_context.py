@@ -25,6 +25,7 @@ Works with PyMongo driver fork at
 https://github.com/wolfmanx/mongo-python-driver
 '''
 
+import sys
 import ast
 import copy
 import pkgutil
@@ -37,7 +38,13 @@ try:
     bson_context = bson.context
     must_patch = False
 except ImportError:
-    import bson_context
+    try:
+        from pymongo_context import bson_context
+    except ImportError:
+        if __name__ == '__main__':
+            sys.modules['pymongo_context'] = sys.modules['__main__']
+        import bson_context
+        sys.modules['pymongo_context.bson_context'] = bson_context
     must_patch = True
 
 # --------------------------------------------------
@@ -236,7 +243,7 @@ if False:
 # --------------------------------------------------
 # |||:sec:||| BSON Module Patch Setup
 # --------------------------------------------------
-    from bson_context import *
+    from pymongo_context.bson_context import *
     _context = Context()
     _default_ctx = _context
     _thread_ctx = ThreadContext()
