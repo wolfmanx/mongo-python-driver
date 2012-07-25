@@ -23,6 +23,8 @@ from pymongo import (helpers,
 from pymongo.errors import (InvalidOperation,
                             AutoReconnect)
 
+check_context = lambda x: None
+
 _QUERY_OPTIONS = {
     "tailable_cursor": 2,
     "slave_okay": 4,
@@ -118,9 +120,7 @@ class Cursor(object):
         self.__must_use_master = _must_use_master
         self.__uuid_subtype = _uuid_subtype or collection.uuid_subtype
         self.__context = context # or bson.get_context() # |:debug:|
-        if (self.__context is not None or # |:debug:|
-            not isinstance(self.__context, bson.Context)):
-            print('not a BSON context: ' + repr(self.__context))
+        check_context(self.__context)
         self.__query_flags = 0
 
         self.__data = []
