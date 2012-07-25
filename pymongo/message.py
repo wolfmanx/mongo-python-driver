@@ -47,12 +47,13 @@ MIN_INT32 = -2147483648
 import sys
 check_context = lambda x: None
 
-def __last_error(args):
+def __last_error(namespace, args):
     """Data to send to do a lastError.
     """
     cmd = SON([("getlasterror", 1)])
     cmd.update(args)
-    return query(0, "admin.$cmd", 0, -1, cmd)
+    splitns = namespace.split('.', 1)
+    return query(0, splitns[0] + '.$cmd', 0, -1, cmd)
 
 
 def __pack_message(operation, data):
@@ -85,7 +86,8 @@ def insert(collection_name, docs, check_keys,
     data += EMPTY.join(encoded)
     if safe:
         (_, insert_message) = __pack_message(2002, data)
-        (request_id, error_message, _) = __last_error(last_error_args)
+        (request_id, error_message, _) = __last_error(collection_name,
+                                                      last_error_args)
         return (request_id, insert_message + error_message, max_bson_size)
     else:
         (request_id, insert_message) = __pack_message(2002, data)
@@ -122,7 +124,8 @@ def update(collection_name, upsert, multi,
     data += encoded
     if safe:
         (_, update_message) = __pack_message(2001, data)
-        (request_id, error_message, _) = __last_error(last_error_args)
+        (request_id, error_message, _) = __last_error(collection_name,
+                                                      last_error_args)
         return (request_id, update_message + error_message, len(encoded))
     else:
         (request_id, update_message) = __pack_message(2001, data)
@@ -206,7 +209,8 @@ def delete(collection_name, spec, safe, last_error_args, uuid_subtype, context):
     data += encoded
     if safe:
         (_, remove_message) = __pack_message(2006, data)
-        (request_id, error_message, _) = __last_error(last_error_args)
+        (request_id, error_message, _) = __last_error(collection_name,
+                                                      last_error_args)
         return (request_id, remove_message + error_message, len(encoded))
     else:
         (request_id, remove_message) = __pack_message(2006, data)

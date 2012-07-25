@@ -335,9 +335,10 @@ def _elements_to_dict(data, as_class, tz_aware):
 # |:check:| add explicit context?
 def _bson_to_dict(data, as_class, tz_aware):
     obj_size = struct.unpack("<i", data[:4])[0]
-    if len(data) < obj_size:
+    length = len(data)
+    if length < obj_size:
         raise InvalidBSON("objsize too large")
-    if data[obj_size - 1:obj_size] != ZERO:
+    if obj_size != length or data[obj_size - 1:obj_size] != ZERO:
         raise InvalidBSON("bad eoo")
     elements = data[4:obj_size - 1]
     return (_elements_to_dict(elements, as_class, tz_aware), data[obj_size:])
@@ -646,6 +647,14 @@ def has_c():
     .. versionadded:: 1.9
     """
     return _use_c
+
+
+def has_uuid():
+    """Is the uuid module available?
+
+    .. versionadded:: 2.2.1+
+    """
+    return _use_uuid
 
 # |:sec:| update global thread context
 _update_thread_context()

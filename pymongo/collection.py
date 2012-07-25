@@ -202,7 +202,8 @@ class Collection(common.BaseObject):
                             doc="""The BSON encoding/decoding context
                             used for this collection.""")
 
-    def save(self, to_save, manipulate=True, safe=False, **kwargs):
+    def save(self, to_save, manipulate=True,
+             safe=False, check_keys=True, **kwargs):
         """Save a document in this collection.
 
         If `to_save` already has an ``"_id"`` then an :meth:`update`
@@ -231,6 +232,9 @@ class Collection(common.BaseObject):
           - `manipulate` (optional): manipulate the document before
             saving it?
           - `safe` (optional): check that the save succeeded?
+          - `check_keys` (optional): check if keys start with '$' or
+            contain '.', raising :class:`~pymongo.errors.InvalidName`
+            in either case.
           - `**kwargs` (optional): any additional arguments imply
             ``safe=True``, and will be used as options for the
             `getLastError` command
@@ -245,10 +249,10 @@ class Collection(common.BaseObject):
             raise TypeError("cannot save object of type %s" % type(to_save))
 
         if "_id" not in to_save:
-            return self.insert(to_save, manipulate, safe, **kwargs)
+            return self.insert(to_save, manipulate, safe, check_keys, **kwargs)
         else:
             self.update({"_id": to_save["_id"]}, to_save, True,
-                        manipulate, safe, _check_keys=True, **kwargs)
+                        manipulate, safe, _check_keys=check_keys, **kwargs)
             return to_save.get("_id", None)
 
     def insert(self, doc_or_docs, manipulate=True,
@@ -910,6 +914,42 @@ class Collection(common.BaseObject):
 
         return options
 
+    def aggregate(self, pipeline):
+        """Perform an aggregation using the aggregation framework on this
+        collection.
+
+        With :class:`~pymongo.replica_set_connection.ReplicaSetConnection`
+        or :class:`~pymongo.master_slave_connection.MasterSlaveConnection`,
+        if the `read_preference` attribute of this instance is not set to
+        :attr:`pymongo.ReadPreference.PRIMARY` or the (deprecated)
+        `slave_okay` attribute of this instance is set to `True` the
+        `aggregate command`_. will be sent to a secondary or slave.
+
+        :Parameters:
+          - `pipeline`: a single command or list of aggregation commands
+
+        .. note:: Requires server version **>= 2.1.1**
+
+        .. versionadded:: 2.2.1+
+
+        .. _aggregate command:
+            http://docs.mongodb.org/manual/applications/aggregation
+        """
+        if not isinstance(pipeline, (dict, list, tuple)):
+            raise TypeError("pipeline must be a dict, list or tuple")
+
+        if isinstance(pipeline, dict):
+            pipeline = [pipeline]
+
+        use_master = not self.slave_okay and not self.read_preference
+
+        return self.__database.command("aggregate", self.__name,
+                                        pipeline=pipeline,
+                                        read_preference=self.read_preference,
+                                        slave_okay=self.slave_okay,
+                                        _use_master=use_master)
+
+
     # TODO key and condition ought to be optional, but deprecation
     # could be painful as argument order would have to change.
     def group(self, key, condition, initial, reduce, finalize=None):
@@ -1053,7 +1093,7 @@ class Collection(common.BaseObject):
 
         .. note:: Requires server version **>= 1.1.1**
 
-        .. seealso:: :doc:`/examples/map_reduce`
+        .. seealso:: :doc:`/examples/aggregation`
 
         .. versionchanged:: 2.2
            Removed deprecated arguments: merge_output and reduce_output

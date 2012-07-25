@@ -44,7 +44,7 @@ from pymongo.errors import (ConfigurationError,
                             OperationFailure,
                             TimeoutError)
 from test.test_connection import get_connection
-from test.utils import joinall
+from test.utils import is_mongos, joinall
 from test import (qcheck,
                   version)
 
@@ -283,15 +283,24 @@ class TestCollection(unittest.TestCase):
         db.test.create_index("who")
         db.test.create_index("when")
         info = db.test.index_information()
+
+        def check_result(result):
+            self.assertEqual(4, result['nIndexes'])
+            self.assertEqual(4, result['nIndexesWas'])
+            indexes = result['indexes']
+            names = [idx['name'] for idx in indexes]
+            for name in names:
+                self.assertTrue(name in info)
+            for key in info:
+                self.assertTrue(key in names)
+
         reindexed = db.test.reindex()
-        self.assertEqual(4, reindexed['nIndexes'])
-        self.assertEqual(4, reindexed['nIndexesWas'])
-        indexes = reindexed['indexes']
-        names = [idx['name'] for idx in indexes]
-        for name in names:
-            self.assertTrue(name in info)
-        for key in info:
-            self.assertTrue(key in names)
+        if 'raw' in reindexed:
+            # mongos
+            for result in reindexed['raw'].itervalues():
+                check_result(result)
+        else:
+            check_result(reindexed)
 
     def test_index_info(self):
         db = self.db
@@ -325,6 +334,8 @@ class TestCollection(unittest.TestCase):
         self.assertEqual([('loc', '2d')], index_info['key'])
 
     def test_index_haystack(self):
+        if is_mongos(self.db.connection):
+            raise SkipTest("geoSearch is not supported by mongos")
         db = self.db
         db.test.drop_indexes()
         db.test.remove()
@@ -1047,6 +1058,21 @@ class TestCollection(unittest.TestCase):
         self.assertEqual(db.test.find({'foo': 'bar'}).count(), 1)
         self.assertEqual(db.test.find({'foo': re.compile(r'ba.*')}).count(), 2)
 
+    def test_aggregate(self):
+        if not version.at_least(self.db.connection, (2, 1, 0)):
+            raise SkipTest("The aggregate command requires MongoDB >= 2.1.0")
+        db = self.db
+        db.drop_collection("test")
+        db.test.save({'foo': [1, 2]})
+
+        self.assertRaises(TypeError, db.test.aggregate, "wow")
+
+        pipeline = {"$project": {"_id": False, "foo": True}}
+        expected = {'ok': 1.0, 'result': [{'foo': [1, 2]}]}
+        self.assertEqual(expected, db.test.aggregate(pipeline))
+        self.assertEqual(expected, db.test.aggregate([pipeline]))
+        self.assertEqual(expected, db.test.aggregate((pipeline,)))
+
     def test_group(self):
         db = self.db
         db.drop_collection("test")
@@ -1470,14 +1496,18 @@ class TestCollection(unittest.TestCase):
             self.assertEqual(2, result.find_one({"_id": "dog"})["value"])
             self.assertEqual(1, result.find_one({"_id": "mouse"})["value"])
 
-            result = db.test.map_reduce(map, reduce,
-                                        out=SON([('replace', 'mrunittests'),
-                                                 ('db', 'mrtestdb')
-                                                ]))
-            self.assertEqual(3, result.find_one({"_id": "cat"})["value"])
-            self.assertEqual(2, result.find_one({"_id": "dog"})["value"])
-            self.assertEqual(1, result.find_one({"_id": "mouse"})["value"])
-            self.connection.mrtestdb.mrunittests.drop()
+            if (is_mongos(self.db.connection)
+                and not version.at_least(self.db.connection, (2, 1, 2))):
+                pass
+            else:
+                result = db.test.map_reduce(map, reduce,
+                                            out=SON([('replace', 'mrunittests'),
+                                                     ('db', 'mrtestdb')
+                                                    ]))
+                self.assertEqual(3, result.find_one({"_id": "cat"})["value"])
+                self.assertEqual(2, result.find_one({"_id": "dog"})["value"])
+                self.assertEqual(1, result.find_one({"_id": "mouse"})["value"])
+                self.connection.mrtestdb.mrunittests.drop()
 
         full_result = db.test.map_reduce(map, reduce,
                                          out='mrunittests', full_response=True)

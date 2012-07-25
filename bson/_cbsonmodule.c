@@ -1141,10 +1141,12 @@ static PyObject* _cbson_dict_to_bson(PyObject* self, PyObject* args) {
     PyObject* result;
     unsigned char check_keys;
     unsigned char uuid_subtype;
-    PyObject* context;
+    unsigned char top_level = 1;
+    PyObject* context = NULL;
     buffer_t buffer;
 
-    if (!PyArg_ParseTuple(args, "ObbO", &dict, &check_keys, &uuid_subtype, &context)) {
+    if (!PyArg_ParseTuple(args, "Obb|bO", &dict,
+                          &check_keys, &uuid_subtype, &top_level, &context)) {
         return NULL;
     }
 
@@ -1154,7 +1156,7 @@ static PyObject* _cbson_dict_to_bson(PyObject* self, PyObject* args) {
         return NULL;
     }
 
-    if (!write_dict(self, buffer, dict, check_keys, uuid_subtype, 1, context)) {
+    if (!write_dict(self, buffer, dict, check_keys, uuid_subtype, top_level, context)) {
         buffer_free(buffer);
         return NULL;
     }
@@ -1728,7 +1730,7 @@ static PyObject* _cbson_bson_to_dict(PyObject* self, PyObject* args) {
         return NULL;
     }
 
-    if (string[size - 1]) {
+    if (size != total_size || string[size - 1]) {
         PyObject* InvalidBSON = _error("InvalidBSON");
         PyErr_SetString(InvalidBSON,
                         "bad eoo");
