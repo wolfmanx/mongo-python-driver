@@ -1307,8 +1307,14 @@ def run(parameters, pass_opts):                            # ||:fnc:||
     keep_details = False # |:config:|
 
     if parameters.profile:
+        hl_lvl(1)
+        hl(sformat('Python {0:d} - C Extension enabled - pymongo {1}', sys.version_info[0], pymongo_version))
+        hl_lvl(0)
         feature_enable_c(True)
         profile_run(keep_details)
+        hl_lvl(1)
+        hl(sformat('Python {0:d} - C Extension disabled - pymongo {1}', sys.version_info[0], pymongo_version))
+        hl_lvl(0)
         feature_enable_c(False)
         profile_run(keep_details)
         exit(0)
