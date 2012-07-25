@@ -332,7 +332,6 @@ def _elements_to_dict(data, as_class, tz_aware):
         result[key] = value
     return result
 
-# |:check:| add explicit context?
 def _bson_to_dict(data, as_class, tz_aware):
     obj_size = struct.unpack("<i", data[:4])[0]
     if len(data) < obj_size:
@@ -366,6 +365,13 @@ def _try_object_hooks(value, need_dict, context):
                 result = hook
             if not dict_required or isinstance(result, dict):
                 return (True, result)
+
+    get_object_state = ctx.get_object_state
+    if get_object_state is not None:
+        valid, result = get_object_state(value, need_dict)
+        if valid and (not need_dict or isinstance(result, dict)):
+            return (True, result)
+
     return (False, None)
 
 def _element_to_bson(key, value, check_keys, uuid_subtype, context):
@@ -526,7 +532,6 @@ def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True, context=None):
         # C extension behaves differently see https://jira.mongodb.org/browse/PYTHON-380
         return ctx._dict_to_bson(dict, check_keys, uuid_subtype, context)
 
-# |:todo:| add explicit context
 def decode_all(data, as_class=dict, tz_aware=True):
     """Decode BSON data to multiple documents.
 

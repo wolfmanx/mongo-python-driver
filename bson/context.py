@@ -88,7 +88,11 @@ class Context(object):                                     # ||:cls:||
         # [('__bson__', False), ('__getstate__', True), ('__dict__', True)]
         # ('object_state_hooks', [('__bson__', False)]),
         ('object_state_hooks', []),
-        
+
+        # last resort callback to retrieve object state:
+        # valid, result = get_object_state(obj, need_dict)
+        ('get_object_state', None),
+
         # document class, when context is used as `as_class` parameter
         # for decoding.
         ('as_class', SON),
