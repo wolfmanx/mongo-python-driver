@@ -26,6 +26,7 @@ from pymongo import (common,
 from pymongo.cursor import Cursor
 from pymongo.errors import ConfigurationError, InvalidName, InvalidOperation
 
+check_context = lambda x: None
 
 def _gen_index_name(keys):
     """Generate an index name from the set of fields it is over.
@@ -105,9 +106,7 @@ class Collection(common.BaseObject):
         self.__name = unicode(name)
         self.__uuid_subtype = OLD_UUID_SUBTYPE
         self.__context = None # or bson.get_context() # |:debug:|
-        if (self.__context is not None or # |:debug:|
-            not isinstance(self.__context, bson.Context)):
-            print('not a BSON context: ' + repr(self.__context))
+        check_context(self.__context)
         self.__full_name = u"%s.%s" % (self.__database.name, self.__name)
         if create or kwargs:
             self.__create(kwargs)
