@@ -915,6 +915,81 @@ def waste_some_time_with_wrapped_python_element_to_bson(ref_time): # ||:fnc:||
         report_times(total_time, wasted_time, ref_time=ref_time)
     return total_time
 
+def encode_dont_waste_time_with_get_object_state_feature_prof(data):  # ||:fnc:||
+    bson.BSON.encode(data)
+
+def dont_waste_time_with_get_object_state_feature_prof():  # ||:fnc:||
+    # works always
+    sv_context = bson.lock()
+    context = bson.get_context()
+    context.get_object_state = get_object_state_callback
+    bson.set_context(context)
+    try:
+        bson.BSON.encode({'x': FlatConvertible()})
+    except bson.errors.InvalidDocument:
+        bson.unlock(sv_context)
+        printe('SKIPPED')
+        return
+
+    data = DATA
+    try:
+        for indx in range(CYCLES):
+            prepare_data(data, indx)
+            encode_dont_waste_time_with_get_object_state_feature_prof(data)
+            restore_data(data, indx)
+    except Exception:
+        (t, e, tb) = sys.exc_info()
+        printe(''.join(traceback.format_tb(tb)))
+        printf(sformat('{0}: {1}', t.__name__, e))
+
+    bson.unlock(sv_context)
+
+PROFILING['dont_waste_time_with_get_object_state_feature'] = \
+dont_waste_time_with_get_object_state_feature_prof
+
+def get_object_state_callback(obj, need_dict):             # ||:fnc:||
+    if hasattr(obj, '__getstate__'):
+        return (True, obj.__getstate__())
+    return (False, None)
+
+def dont_waste_time_with_get_object_state_feature(ref_time): # ||:fnc:||
+    # works always
+    sv_context = bson.lock()
+    context = bson.get_context()
+    context.get_object_state = get_object_state_callback
+    bson.set_context(context)
+    try:
+        bson.BSON.encode({'x': FlatConvertible()})
+    except bson.errors.InvalidDocument:
+        bson.unlock(sv_context)
+        printe('SKIPPED')
+        return
+
+    show_context()
+
+    data = DATA
+    total_start = datetime.now()
+
+    show_time = True
+    try:
+        for indx in range(CYCLES):
+            prepare_data(data, indx)
+            # encode with get_object_state
+            bson.BSON.encode(data)
+            restore_data(data, indx)
+    except Exception:
+        (t, e, tb) = sys.exc_info()
+        printe(''.join(traceback.format_tb(tb)))
+        printf(sformat('{0}: {1}', t.__name__, e))
+        show_time = False
+
+    bson.unlock(sv_context)
+    total_end = datetime.now()
+    total_time = total_end-total_start
+    if show_time:
+        report_times(total_time, ref_time=ref_time)
+    return total_time
+
 def encode_dont_waste_time_with_getstate_hook_feature_prof(data):  # ||:fnc:||
     bson.BSON.encode(data)
 
@@ -1181,6 +1256,14 @@ def test_run(ref_time=None):                               # ||:fnc:||
     try:
         hl('waste_some_time_with_wrapped_python_element_to_bson()')
         waste_some_time_with_wrapped_python_element_to_bson(ref_time)
+    except:
+        (t, e, tb) = sys.exc_info()
+        printe(''.join(traceback.format_tb(tb)))
+        printf(sformat('{0}: {1}', t.__name__, e))
+
+    try:
+        hl('dont_waste_time_with_get_object_state_feature()' + set_ref_time)
+        dont_waste_time_with_get_object_state_feature(ref_time=ref_time)
     except:
         (t, e, tb) = sys.exc_info()
         printe(''.join(traceback.format_tb(tb)))

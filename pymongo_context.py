@@ -299,6 +299,13 @@ if False:
                     result = hook
                 if not dict_required or isinstance(result, dict):
                     return (True, result)
+
+        get_object_state = ctx.get_object_state
+        if get_object_state is not None:
+            valid, result = get_object_state(value, need_dict)
+            if valid and (not need_dict or isinstance(result, dict)):
+                return (True, result)
+            
         return (False, None)
 
     import sys

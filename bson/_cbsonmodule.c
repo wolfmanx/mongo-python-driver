@@ -341,6 +341,38 @@ static PyObject* _try_object_hooks(PyObject* self, PyObject* object, char need_d
         }
     }
     Py_DECREF(hook_defs);
+
+    if (object_state == NULL && !PyErr_Occurred()) {
+        PyObject* get_object_state = PyObject_GetAttrString(context, "get_object_state");
+        PyObject* result;
+        PyObject* need_dict_o;
+        if (get_object_state == NULL || get_object_state == Py_None) {
+            PyErr_Clear();
+            Py_XDECREF(get_object_state);
+            Py_XDECREF(release_context);
+            return NULL;
+        }
+        need_dict_o = need_dict ? Py_True : Py_False;
+        result = PyObject_CallFunctionObjArgs(get_object_state, object, need_dict_o, NULL);
+        Py_DECREF(get_object_state);
+        if ( result != NULL )
+        {
+            PyObject* _valid;
+            char valid;
+            _valid = PySequence_GetItem(result, 0);
+            valid = _valid == Py_True;
+            Py_XDECREF(_valid);
+            if ( valid ) {
+                object_state = PySequence_GetItem(result, 1);
+                if (need_dict && !PyDict_Check(object_state)) {
+                    Py_XDECREF(object_state);
+                    object_state = NULL;
+                }
+            }
+            Py_DECREF(result);
+        }
+    }
+    
     Py_XDECREF(release_context);
     return object_state;
 }
