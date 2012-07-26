@@ -24,7 +24,7 @@ from pymongo import (common,
                      helpers,
                      message)
 from pymongo.cursor import Cursor
-from pymongo.errors import ConfigurationError, InvalidName, InvalidOperation
+from pymongo.errors import ConfigurationError, InvalidName
 
 check_context = lambda x: None
 
@@ -79,11 +79,14 @@ class Collection(common.BaseObject):
 
         .. mongodoc:: collections
         """
-        super(Collection,
-              self).__init__(slave_okay=database.slave_okay,
-                             read_preference=database.read_preference,
-                             safe=database.safe,
-                             **(database.get_lasterror_options()))
+        super(Collection, self).__init__(
+            slave_okay=database.slave_okay,
+            read_preference=database.read_preference,
+            tag_sets=database.tag_sets,
+            secondary_acceptable_latency_ms=(
+                database.secondary_acceptable_latency_ms),
+            safe=database.safe,
+            **(database.get_lasterror_options()))
 
         if not isinstance(name, basestring):
             raise TypeError("name must be an instance "
@@ -609,6 +612,10 @@ class Collection(common.BaseObject):
             :class:`~pymongo.connection.Connection`-level default
           - `read_preference` (optional): The read preference for
             this query.
+          - `tag_sets` (optional): The tag sets for this query.
+          - `secondary_acceptable_latency_ms` (optional): Any replica-set
+            member whose ping time is within secondary_acceptable_latency_ms of
+            the nearest member may accept reads. Default 15 milliseconds.
           - `context` (optional): encoding context for bson.BSON.encode.
 
         .. note:: The `manipulate` parameter may default to False in
@@ -616,7 +623,10 @@ class Collection(common.BaseObject):
 
         .. note:: The `max_scan` parameter requires server
            version **>= 1.5.1**
-
+           
+        .. versionadded:: 2.2.1+
+           The `tag_sets` and `secondary_acceptable_latency_ms` parameters.
+           
         .. versionadded:: 1.11+
            The `await_data`, `partial`, and `manipulate` parameters.
 
@@ -639,6 +649,11 @@ class Collection(common.BaseObject):
             kwargs['slave_okay'] = self.slave_okay
         if not 'read_preference' in kwargs:
             kwargs['read_preference'] = self.read_preference
+        if not 'tag_sets' in kwargs:
+            kwargs['tag_sets'] = self.tag_sets
+        if not 'secondary_acceptable_latency_ms' in kwargs:
+            kwargs['secondary_acceptable_latency_ms'] = (
+                self.secondary_acceptable_latency_ms)
         return Cursor(self, *args, **kwargs)
 
     def count(self):
@@ -944,7 +959,6 @@ class Collection(common.BaseObject):
 
         return self.__database.command("aggregate", self.__name,
                                         pipeline=pipeline,
-                                        read_preference=self.read_preference,
                                         slave_okay=self.slave_okay,
                                         _use_master=use_master)
 
@@ -969,9 +983,10 @@ class Collection(common.BaseObject):
         With :class:`~pymongo.replica_set_connection.ReplicaSetConnection`
         or :class:`~pymongo.master_slave_connection.MasterSlaveConnection`,
         if the `read_preference` attribute of this instance is not set to
-        :attr:`pymongo.ReadPreference.PRIMARY` or the (deprecated)
-        `slave_okay` attribute of this instance is set to `True` the group
-        command will be sent to a secondary or slave.
+        :attr:`pymongo.read_preferences.ReadPreference.PRIMARY` or
+        :attr:`pymongo.read_preferences.ReadPreference.PRIMARY_PREFERRED`, or
+        the (deprecated) `slave_okay` attribute of this instance is set to
+        `True`, the group command will be sent to a secondary or slave.
 
         :Parameters:
           - `key`: fields to group by (see above description)
@@ -1010,6 +1025,9 @@ class Collection(common.BaseObject):
                                        uuid_subtype=self.__uuid_subtype,
                                        context=self.__context,
                                        read_preference=self.read_preference,
+                                       tag_sets=self.tag_sets,
+                                       secondary_acceptable_latency_ms=(
+                                           self.secondary_acceptable_latency_ms),
                                        slave_okay=self.slave_okay,
                                        _use_master=use_master)["retval"]
 
@@ -1110,11 +1128,21 @@ class Collection(common.BaseObject):
             raise TypeError("'out' must be an instance of "
                             "%s or dict" % (basestring.__name__,))
 
+        if isinstance(out, dict) and out.get('inline'):
+            must_use_master = False
+        else:
+            must_use_master = True
+
         response = self.__database.command("mapreduce", self.__name,
                                            uuid_subtype=self.__uuid_subtype,
                                            context=self.__context,
                                            map=map, reduce=reduce,
-                                           out=out, **kwargs)
+                                           read_preference=self.read_preference,
+                                           tag_sets=self.tag_sets,
+                                           secondary_acceptable_latency_ms=(
+                                               self.secondary_acceptable_latency_ms),
+                                           out=out, _use_master=must_use_master,
+                                           **kwargs)
 
         if full_response or not response.get('result'):
             return response
@@ -1139,9 +1167,10 @@ class Collection(common.BaseObject):
         With :class:`~pymongo.replica_set_connection.ReplicaSetConnection`
         or :class:`~pymongo.master_slave_connection.MasterSlaveConnection`,
         if the `read_preference` attribute of this instance is not set to
-        :attr:`pymongo.ReadPreference.PRIMARY` or the (deprecated)
-        `slave_okay` attribute of this instance is set to `True` the inline
-        map reduce will be run on a secondary or slave.
+        :attr:`pymongo.read_preferences.ReadPreference.PRIMARY` or
+        :attr:`pymongo.read_preferences.ReadPreference.PRIMARY_PREFERRED`, or
+        the (deprecated) `slave_okay` attribute of this instance is set to
+        `True`, the inline map reduce will be run on a secondary or slave.
 
         :Parameters:
           - `map`: map function (as a JavaScript string)
@@ -1165,6 +1194,9 @@ class Collection(common.BaseObject):
                                       uuid_subtype=self.__uuid_subtype,
                                       context=self.__context,
                                       read_preference=self.read_preference,
+                                      tag_sets=self.tag_sets,
+                                      secondary_acceptable_latency_ms=(
+                                          self.secondary_acceptable_latency_ms),
                                       slave_okay=self.slave_okay,
                                       _use_master=use_master,
                                       map=map, reduce=reduce,
