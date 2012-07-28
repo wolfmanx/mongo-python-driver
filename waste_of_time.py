@@ -1,5 +1,34 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+"""\
+waste_of_time.py - pymongo profiling
+
+======  ====================
+usage:  waste_of_time.py [OPTIONS]
+        waste_of_time.py --profile
+        waste_of_time.py [--ref-time] --stats [profiler-file, ...]
+or      import waste_of_time
+======  ====================
+
+Options
+=======
+  -p, --profile         run with profiler
+
+  -r, --ref-time=FLOAT  reference time
+  -s, --stats           print profiler statistics
+
+  -c, --calibrate       calibrate profiler (not needed for cProfile)
+
+  -q, --quiet           suppress warnings
+  -v, --verbose         verbose test output
+  -d, --debug=NUM       show debug information
+
+  -t, --test            run doc tests
+  -h, --help            display this help message
+
+Module Members
+==============
+"""
 
 # --------------------------------------------------
 # |||:sec:||| COMPATIBILITY
@@ -308,6 +337,8 @@ KEYS = [
     ('key372', 372),
     ('key251', 251)]
 
+ENCODING_RESULTS = {}
+
 class FlatConvertible(object):                             # ||:cls:||
 
     def __getstate__(self):
@@ -414,8 +445,12 @@ def report_times(total_time, wasted_time=None, totally_wasted_time=None, ref_tim
             factor = ''
         print('total_time (' + str(CYCLES) + '/' + str(DATA_COUNT) + ')             : ' + str(total_time) + factor)
 
+# --------------------------------------------------
+# |||:sec:||| waste_some_time_running_into_an_exception
+# --------------------------------------------------
+
 def encode_waste_some_time_running_into_an_exception_prof(data): # ||:fnc:||
-    bson.BSON.encode(data)
+    return bson.BSON.encode(data)
 
 def waste_some_time_running_into_an_exception_prof():      # ||:fnc:||
     data = DATA
@@ -498,6 +533,10 @@ def waste_some_time_running_into_an_exception(ref_time=None): # ||:fnc:||
     report_times(total_time, wasted_time, ref_time=ref_time)
     total_time = total_end-total_start
     return ref_time
+
+# --------------------------------------------------
+# |||:sec:||| waste_some_space_and_time_converting_data_with_json_bson_default
+# --------------------------------------------------
 
 def check_type_with_json_then_bson_prof(key, val, dcopy):  # ||:fnc:||
     try:
@@ -583,7 +622,11 @@ def waste_some_space_and_time_converting_data_with_json_bson_default(ref_time): 
     report_times(total_time, wasted_time, totally_wasted_time, ref_time=ref_time, json_time=json_time, bson_time=bson_time)
     return total_time
 
-def check_type_with_BSON_enc_prof(key, val, dcopy): # ||:fnc:||
+# --------------------------------------------------
+# |||:sec:||| waste_some_space_and_time_converting_data_with_BSON_enc
+# --------------------------------------------------
+
+def check_type_with_BSON_enc_prof(key, val, dcopy):        # ||:fnc:||
     start = datetime.now()
     try:
         # BSON encodable
@@ -652,7 +695,11 @@ def waste_some_space_and_time_converting_data_with_BSON_encode(ref_time): # ||:f
     report_times(total_time, wasted_time, totally_wasted_time, ref_time=ref_time)
     return total_time
 
-def check_type_with_dict_to_bson_buggy_prof(key, val, dcopy): # ||:fnc:||
+# --------------------------------------------------
+# |||:sec:||| waste_some_space_and_time_converting_data_with_dict_to_bson
+# --------------------------------------------------
+
+def check_type_with_dict_to_bson_prof(key, val, dcopy):    # ||:fnc:||
     try:
         # BSON encodable
         bson._dict_to_bson({ 'd': val }, False, bson.OLD_UUID_SUBTYPE)
@@ -661,29 +708,40 @@ def check_type_with_dict_to_bson_buggy_prof(key, val, dcopy): # ||:fnc:||
         state = val.__getstate__()
         dcopy[key] = state
         for key, val in ditems(state):
-            check_type_with_dict_to_bson_buggy_prof(key, val, state)
+            check_type_with_dict_to_bson_prof(key, val, state)
 
-def encode_waste_some_space_and_time_converting_data_with_dict_to_bson_buggy_prof(data): # ||:fnc:||
+def encode_waste_some_space_and_time_converting_data_with_dict_to_bson_prof(data): # ||:fnc:||
     dcopy = dict()
     for key, val in ditems(data):
-        check_type_with_dict_to_bson_buggy_prof(key, val, dcopy)
+        check_type_with_dict_to_bson_prof(key, val, dcopy)
     bson.BSON.encode(dcopy)
 
-def waste_some_space_and_time_converting_data_with_dict_to_bson_buggy_prof(): # ||:fnc:||
+def waste_some_space_and_time_converting_data_with_dict_to_bson_prof(): # ||:fnc:||
     data = DATA
     for indx in range(CYCLES):
         prepare_data(data, indx)
-        encode_waste_some_space_and_time_converting_data_with_dict_to_bson_buggy_prof(data)
+        encode_waste_some_space_and_time_converting_data_with_dict_to_bson_prof(data)
         restore_data(data, indx)
 
-PROFILING['waste_some_space_and_time_converting_data_with_dict_to_bson_buggy'] = \
-waste_some_space_and_time_converting_data_with_dict_to_bson_buggy_prof
+PROFILING['waste_some_space_and_time_converting_data_with_dict_to_bson'] = \
+waste_some_space_and_time_converting_data_with_dict_to_bson_prof
 
-def check_type_with_dict_to_bson_buggy(key, val, dcopy, wt, totally_wasted_time): # ||:fnc:||
+_dict_to_bson_args = list()
+try:
+    bson._dict_to_bson({ 'd': 1 }, False, bson.OLD_UUID_SUBTYPE, False, None)
+    _dict_to_bson_args.extend((False, None))
+except TypeError:
+    try:
+        bson._dict_to_bson({ 'd': 1 }, False, bson.OLD_UUID_SUBTYPE, None)
+        _dict_to_bson_args.extend((False,))
+    except TypeError:
+        pass
+    
+def check_type_with_dict_to_bson(key, val, dcopy, wt, totally_wasted_time): # ||:fnc:||
     start = datetime.now()
     try:
         # BSON encodable
-        bson._dict_to_bson({ 'd': val }, False, bson.OLD_UUID_SUBTYPE)
+        bson._dict_to_bson({ 'd': val }, False, bson.OLD_UUID_SUBTYPE, *_dict_to_bson_args)
         dcopy[key] = val
         end = datetime.now()
         wt.append(end-start)
@@ -693,11 +751,11 @@ def check_type_with_dict_to_bson_buggy(key, val, dcopy, wt, totally_wasted_time)
         end = datetime.now()
         wt.append(end-start)
         for key, val in ditems(state):
-            check_type_with_dict_to_bson_buggy(key, val, state, wt, totally_wasted_time)
+            check_type_with_dict_to_bson(key, val, state, wt, totally_wasted_time)
         wt = totally_wasted_time
     return wt
 
-def waste_some_space_and_time_converting_data_with_dict_to_bson_buggy(ref_time): # ||:fnc:||
+def waste_some_space_and_time_converting_data_with_dict_to_bson(ref_time): # ||:fnc:||
     # works always
 
     show_context()
@@ -711,7 +769,7 @@ def waste_some_space_and_time_converting_data_with_dict_to_bson_buggy(ref_time):
         wt = wasted_time
         dcopy = dict()
         for key, val in ditems(data):
-            wt = check_type_with_dict_to_bson_buggy(key, val, dcopy, wt, totally_wasted_time)
+            wt = check_type_with_dict_to_bson(key, val, dcopy, wt, totally_wasted_time)
         bson.BSON.encode(dcopy)
         restore_data(data, indx)
     total_end = datetime.now()
@@ -719,46 +777,9 @@ def waste_some_space_and_time_converting_data_with_dict_to_bson_buggy(ref_time):
     report_times(total_time, wasted_time, totally_wasted_time, ref_time=ref_time)
     return total_time
 
-def check_type_with_dict_to_bson_fixed(key, val, dcopy, wt, totally_wasted_time): # ||:fnc:||
-    start = datetime.now()
-    try:
-        # BSON encodable
-        bson._dict_to_bson({ 'd': val }, False, bson.OLD_UUID_SUBTYPE, False)
-        dcopy[key] = val
-        end = datetime.now()
-        wt.append(end-start)
-    except bson.errors.InvalidDocument:
-        state = val.__getstate__()
-        dcopy[key] = state
-        end = datetime.now()
-        wt.append(end-start)
-        for key, val in ditems(state):
-            check_type_with_dict_to_bson_fixed(key, val, state, wt, totally_wasted_time)
-        wt = totally_wasted_time
-    return wt
-
-def waste_some_space_and_time_converting_data_with_dict_to_bson_fixed(ref_time): # ||:fnc:||
-    # works always
-
-    show_context()
-
-    data = DATA
-    dcopy = dict()
-    wasted_time = []
-    totally_wasted_time = []
-    total_start = datetime.now()
-    for indx in range(CYCLES):
-        prepare_data(data, indx)
-        dcopy = dict()
-        wt = wasted_time
-        for key, val in ditems(data):
-            wt = check_type_with_dict_to_bson_fixed(key, val, dcopy, wt, totally_wasted_time)
-        restore_data(data, indx)
-        bson.BSON.encode(dcopy)
-    total_end = datetime.now()
-    total_time = total_end-total_start
-    report_times(total_time, wasted_time, totally_wasted_time, ref_time=ref_time)
-    return total_time
+# --------------------------------------------------
+# |||:sec:||| waste_some_space_and_time_converting_data_with_element_to_bson
+# --------------------------------------------------
 
 def check_type_with_element_to_bson_prof(key, val, dcopy): # ||:fnc:||
     try:
@@ -833,6 +854,10 @@ def waste_some_space_and_time_converting_data_with_element_to_bson(ref_time): # 
     total_time = total_end-total_start
     report_times(total_time, wasted_time, totally_wasted_time, ref_time=ref_time)
     return total_time
+
+# --------------------------------------------------
+# |||:sec:||| waste_some_time_with_wrapped_python_element_to_bson
+# --------------------------------------------------
 
 def encode_waste_some_time_with_wrapped_python_element_to_bson_prof(data): # ||:fnc:||
     bson.BSON.encode(data)
@@ -915,6 +940,10 @@ def waste_some_time_with_wrapped_python_element_to_bson(ref_time): # ||:fnc:||
         report_times(total_time, wasted_time, ref_time=ref_time)
     return total_time
 
+# --------------------------------------------------
+# |||:sec:||| dont_waste_time_with_get_object_state_feature
+# --------------------------------------------------
+
 def encode_dont_waste_time_with_get_object_state_feature_prof(data):  # ||:fnc:||
     bson.BSON.encode(data)
 
@@ -990,10 +1019,14 @@ def dont_waste_time_with_get_object_state_feature(ref_time): # ||:fnc:||
         report_times(total_time, ref_time=ref_time)
     return total_time
 
+# --------------------------------------------------
+# |||:sec:||| dont_waste_time_with_getstate_hook_feature
+# --------------------------------------------------
+
 def encode_dont_waste_time_with_getstate_hook_feature_prof(data):  # ||:fnc:||
     bson.BSON.encode(data)
 
-def dont_waste_time_with_getstate_hook_feature_prof():  # ||:fnc:||
+def dont_waste_time_with_getstate_hook_feature_prof():     # ||:fnc:||
     # works always
 
     feature_enable_getstate_hook(True)
@@ -1057,10 +1090,14 @@ def dont_waste_time_with_getstate_hook_feature(ref_time):  # ||:fnc:||
         report_times(total_time, ref_time=ref_time)
     return total_time
 
-def encode_dont_waste_time_with_dict_hook_feature_prof(data):  # ||:fnc:||
+# --------------------------------------------------
+# |||:sec:||| dont_waste_time_with_dict_hook_feature
+# --------------------------------------------------
+
+def encode_dont_waste_time_with_dict_hook_feature_prof(data): # ||:fnc:||
     bson.BSON.encode(data)
 
-def dont_waste_time_with_dict_hook_feature_prof():  # ||:fnc:||
+def dont_waste_time_with_dict_hook_feature_prof():         # ||:fnc:||
     # works always
 
     feature_enable_dict_hook(True)
@@ -1125,10 +1162,14 @@ def dont_waste_time_with_dict_hook_feature(ref_time):      # ||:fnc:||
         report_times(total_time, ref_time=ref_time)
     return total_time
 
-def encode_dont_waste_time_with_bson_hook_feature_prof(data):  # ||:fnc:||
+# --------------------------------------------------
+# |||:sec:||| dont_waste_time_with_bson_hook_feature
+# --------------------------------------------------
+
+def encode_dont_waste_time_with_bson_hook_feature_prof(data): # ||:fnc:||
     bson.BSON.encode(data)
 
-def dont_waste_time_with_bson_hook_feature_prof():  # ||:fnc:||
+def dont_waste_time_with_bson_hook_feature_prof():         # ||:fnc:||
     # works always
 
     feature_enable_bson_hook(True)
@@ -1193,6 +1234,10 @@ def dont_waste_time_with_bson_hook_feature(ref_time):      # ||:fnc:||
         report_times(total_time, ref_time=ref_time)
     return total_time
 
+# --------------------------------------------------
+# |||:sec:||| Test Run
+# --------------------------------------------------
+
 def test_run(ref_time=None):                               # ||:fnc:||
 
     if ref_time is None:
@@ -1226,24 +1271,12 @@ def test_run(ref_time=None):                               # ||:fnc:||
         printf(sformat('{0}: {1}', t.__name__, e))
 
     try:
-        hl('waste_some_space_and_time_converting_data_with_dict_to_bson_buggy()')
-        waste_some_space_and_time_converting_data_with_dict_to_bson_buggy(ref_time)
+        hl('waste_some_space_and_time_converting_data_with_dict_to_bson()')
+        waste_some_space_and_time_converting_data_with_dict_to_bson(ref_time)
     except:
         (t, e, tb) = sys.exc_info()
         printe(''.join(traceback.format_tb(tb)))
         printf(sformat('{0}: {1}', t.__name__, e))
-
-    hl('waste_some_space_and_time_converting_data_with_dict_to_bson_fixed()')
-    try:
-        bson._dict_to_bson({ 'd': 1 }, False, bson.OLD_UUID_SUBTYPE, False)
-        try:
-            waste_some_space_and_time_converting_data_with_dict_to_bson_fixed(ref_time)
-        except:
-            (t, e, tb) = sys.exc_info()
-            printe(''.join(traceback.format_tb(tb)))
-            printf(sformat('{0}: {1}', t.__name__, e))
-    except TypeError:
-        printe('SKIPPED')
 
     try:
         hl('waste_some_space_and_time_converting_data_with_element_to_bson()')
@@ -1329,19 +1362,6 @@ def test_run_2(ref_time=None):                             # ||:fnc:||
 
     return ref_time
 
-def print_stats(prof_file):                                # ||:fnc:||
-    import pstats
-    title = prof_file.replace('.prof', '')
-    title_parts = title.split('_')
-    title_code_type = title_parts.pop().replace('py', 'pure Python').replace('c', 'C extension')
-    title_pymongo_version = title_parts.pop()
-    title_python_version = title_parts.pop().replace('py', 'Python')
-    title = '_'.join(title_parts) + ' - ' + title_python_version + ' - ' + title_pymongo_version + ' - ' + title_code_type
-    
-    hl(title)
-    stats = pstats.Stats(prof_file)
-    stats.strip_dirs().sort_stats('cumulative').print_stats('encode_')
-
 def profile_run(keep_details):                             # ||:fnc:||
     import cProfile
     import pstats
@@ -1380,6 +1400,61 @@ def profile_run(keep_details):                             # ||:fnc:||
             os.unlink(output)
     print_stats(overall_out)
 
+# --------------------------------------------------
+# |||:sec:||| Print profile Statistics
+# --------------------------------------------------
+
+def print_stats(prof_file, ref_time=None, relative_factor_funcs=None): # ||:fnc:||
+    import pstats
+    dbg_fwid = globals()['dbg_fwid'] if 'dbg_fwid' in globals() else 15
+
+    title = prof_file.replace('.prof', '')
+    title_parts = title.split('_')
+    title_code_type = title_parts.pop().replace('py', 'pure Python').replace('c', 'C extension')
+    title_pymongo_version = title_parts.pop()
+    title_python_version = title_parts.pop().replace('py', 'Python')
+    title = '_'.join(title_parts) + ' - ' + title_python_version + ' - ' + title_pymongo_version + ' - ' + title_code_type
+
+    if relative_factor_funcs is None:
+        relative_factor_funcs = (
+            'encode_waste_some_time_with_wrapped_python_element_to_bson_prof',
+            'encode_waste_some_space_and_time_converting_data_with_json_bson_default_prof',
+            'encode_dont_waste_time_with_bson_hook_feature_prof',
+            )
+    relative_factor_stats = []
+
+    hl(title)
+    stats = pstats.Stats(prof_file)
+    stats.strip_dirs().sort_stats('cumulative')
+    if stats.fcn_list:
+        stat_list = stats.fcn_list[:]
+    else:
+        stat_list = stats.stats.keys()
+    for func_def in stat_list:
+        file_, line, func = func_def
+        cc, nc, tt, ct, callers = stats.stats[func_def]
+        if func in relative_factor_funcs:
+            relative_factor_stats.append((func, ct))
+        if not func.startswith('encode_'):
+            continue
+        factors = ''
+        if ref_time:
+            factors = sformat(' {0:6.2f}', ct/ref_time)
+        printe(sformat(
+            "{4:<{2}s}: {5:9.6f}{6}",
+            '', 9, dbg_fwid if dbg_fwid > 80 else 80, ':DBG:', func, ct, factors))
+
+    if len(relative_factor_stats) > 1:
+        hl()
+        ref_time = relative_factor_stats[-1][1]
+        for func, ct in relative_factor_stats:
+            factors = sformat(' {0:6.2f}', ct/ref_time)
+            printe(sformat(
+                "{4:<{2}s}: {5:9.6f}{6}",
+                '', 9, dbg_fwid if dbg_fwid > 80 else 80, ':DBG:', func, ct, factors))
+
+    #stats.print_stats('encode_')
+
 def run(parameters, pass_opts):                            # ||:fnc:||
     """Application runner, when called as __main__."""
 
@@ -1388,6 +1463,32 @@ def run(parameters, pass_opts):                            # ||:fnc:||
     dbg_fwid = globals()['dbg_fwid'] if 'dbg_fwid' in globals() else 16
 
     keep_details = False # |:config:|
+
+    ref_time = parameters.ref_time
+
+    if parameters.calibrate:
+        # |:info:| really not needed, since cProfile cannot be calibrated
+        import profile
+        pr = profile.Profile()
+        for i in range(5):
+            print(pr.calibrate(1000000))
+        bias_2 = 2.16413133587e-06
+        bias_3 = 1.9641165358835294e-06
+        # profile.Profile.bias = your_computed_bias
+        exit(0)
+
+    if parameters.stats:
+        if ref_time is None:
+            ref_time = 0.042794
+        prof_files = parameters.args
+        if len(prof_files) == 0:
+            for file_ in sorted(os.listdir(os.path.curdir)):
+                if file_.endswith('.prof'):
+                    prof_files.append(file_)
+
+        for file_ in prof_files:
+            print_stats(file_, ref_time)
+        exit(0)
 
     if parameters.profile:
         hl_lvl(1)
@@ -1411,7 +1512,9 @@ def run(parameters, pass_opts):                            # ||:fnc:||
     # hl('waste_some_time_running_into_an_exception()')
     # waste_some_time_running_into_an_exception()
     # fixed reference time to compare python 2/3
-    ref_time = timedelta(microseconds=11661)
+    if ref_time is None:
+        ref_time = 0.011661
+    ref_time = timedelta(microseconds=ref_time*1000000)
 
     hl_lvl(2)
     hl(sformat('Python {0:d} - C Extension enabled - pymongo {1}', sys.version_info[0], pymongo_version))
@@ -1482,6 +1585,15 @@ def main(argv):                                            # ||:fnc:||
     parser.add_argument(
         '-p', '--profile', action='store_true',
         help='run with profiler')
+    parser.add_argument(
+        '-s', '--stats', action='store_true',
+        help='print profiler statistics')
+    parser.add_argument(
+        '-c', '--calibrate', action='store_true',
+        help='calibrate profiler')
+    parser.add_argument(
+        '-r', '--ref-time', action='store', type=float, metavar='FLOAT',
+        default = None, help='reference time')
     parser.add_argument(
         '-q', '--quiet', action='store_true',
         help='suppress warnings')
@@ -1667,11 +1779,23 @@ if __name__ == "__main__":
 # :ide: +-#+
 # . Python Reference ()
 
+# :ide: COMPILE: Run with python3 with --calibrate
+# . (progn (save-buffer) (compile (concat "python3 ./" (file-name-nondirectory (buffer-file-name)) " --calibrate")))
+
+# :ide: COMPILE: Run with --calibrate
+# . (progn (save-buffer) (compile (concat "python ./" (file-name-nondirectory (buffer-file-name)) " --calibrate")))
+
 # :ide: COMPILE: Run with python3 w/o args
 # . (progn (save-buffer) (compile (concat "python3 ./" (file-name-nondirectory (buffer-file-name)) " ")))
 
 # :ide: COMPILE: Run w/o args
 # . (progn (save-buffer) (compile (concat "python ./" (file-name-nondirectory (buffer-file-name)) " ")))
+
+# :ide: COMPILE: Run with --stats --ref-time 0.043889
+# . (progn (save-buffer) (compile (concat "python ./" (file-name-nondirectory (buffer-file-name)) " --stats --ref-time 0.043889")))
+
+# :ide: COMPILE: Run with --stats
+# . (progn (save-buffer) (compile (concat "python ./" (file-name-nondirectory (buffer-file-name)) " --stats")))
 
 # :ide: COMPILE: Run with python3 with --profile
 # . (progn (save-buffer) (compile (concat "python3 ./" (file-name-nondirectory (buffer-file-name)) " --profile")))
