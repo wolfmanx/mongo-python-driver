@@ -5,17 +5,20 @@ waste_of_time.py - pymongo profiling
 
 ======  ====================
 usage:  waste_of_time.py [OPTIONS]
-        waste_of_time.py --profile
+        waste_of_time.py [--check] --profile
         waste_of_time.py [--ref-time] --stats [profiler-file, ...]
 or      import waste_of_time
 ======  ====================
 
 Options
 =======
+  -c, --check           check encoding result
+  --dict-type DICT      dict type to use for data (default: OrderedDict)
+
   -p, --profile         run with profiler
 
-  -r, --ref-time=FLOAT  reference time
   -s, --stats           print profiler statistics
+  -r, --ref-time=FLOAT  reference time
 
   -c, --calibrate       calibrate profiler (not needed for cProfile)
 
@@ -172,7 +175,7 @@ def hl_lvl(level=0):                                         # |:fnc:|
 hl_lvl(0)
 
 def printe(*args, **kwargs):                               # ||:fnc:||
-    kwargs['file'] = kwargs.get('file', sys.stderr)
+    kwargs['file'] = kwargs.get('file', sys.stdout)
     printf(*args, **kwargs)
 
 # --------------------------------------------------
@@ -219,13 +222,16 @@ def show_context():
 
 import bson.json_util
 
+dict_type = SON
+dict_type = OrderedDict
+
 DATA_COUNT = 1000
 CYCLES = 100
 CONVERTIBLE_COUNT = 1
 MAX_CONVERTIBLE_COUNT = 5
 
 def make_data():
-    data = bson.SON([('key' + str(i), i) for i in range(DATA_COUNT)])
+    data = dict_type([('key' + str(i), i) for i in range(DATA_COUNT)])
     return data
 
 def make_key(data):
@@ -233,6 +239,8 @@ def make_key(data):
     return ('key' + str(key_indx), key_indx)
 
 DATA = make_data()
+import copy
+SV_DATA = copy.deepcopy(DATA)
 #KEYS = [make_key(DATA) for indx in range(CYCLES)]
 #print(repr(KEYS))
 KEYS = [
@@ -337,7 +345,57 @@ KEYS = [
     ('key372', 372),
     ('key251', 251)]
 
+CHECK_RESULT = False
 ENCODING_RESULTS = {}
+
+def check_encoding_result(eres, indx, variant='no_class'):                     # ||:fnc:||
+    if not CHECK_RESULT:
+        return True
+    eres_key = CONVERTIBLE.__name__ + '|' + str(CONVERTIBLE_COUNT) + '|' + variant
+    if eres_key in ENCODING_RESULTS:
+        eres_list, reported = ENCODING_RESULTS[eres_key]
+    else:
+        eres_list = list()
+        reported = False
+        ENCODING_RESULTS[eres_key] = [ eres_list, reported ]
+    if indx < len(eres_list):
+        eres_expected = eres_list[indx]
+        if eres != eres_expected:
+            if reported:
+                lbars = '  '
+                rbars = '  '
+            else:
+                lbars = '||'
+                rbars = '||'
+            printe(sformat('# {4}:ERR:{5} encoding results for {0} differ at {1:d} t: {2:d} e: {3:d}',
+                           eres_key, indx,
+                           len(eres),
+                           len(eres_expected),
+                           lbars, rbars,
+                           ))
+            if not reported:
+                import binascii
+                limit = min(len(eres), len(eres_expected))
+                diffs = []
+                for indx2 in range(limit):
+                    if eres[indx2] != eres_expected[indx2]:
+                        diffs.append((indx2, eres[indx2], eres_expected[indx2]))
+                limit = 200
+                indx = 0
+                for indx2, tb, eb in diffs:
+                    printe(sformat('{0:>5d}: {1} {2}', indx2, binascii.hexlify(tb), binascii.hexlify(eb)))
+                    indx += 1
+                    if indx >= limit:
+                        break
+                ENCODING_RESULTS[eres_key][1] = True
+            return False
+    else:
+        eres_list.append(eres)
+    return True
+
+# --------------------------------------------------
+# |||:sec:||| Test Objects
+# --------------------------------------------------
 
 class FlatConvertible(object):                             # ||:cls:||
 
@@ -382,11 +440,20 @@ class waste_of_time_Encoder(json.JSONEncoder):             # ||:cls:||
 PROFILING = OrderedDict()
 
 def prepare_data(data, indx):                              # ||:fnc:||
+    if indx == 0:
+        eres_key = CONVERTIBLE.__name__ + '|' + str(CONVERTIBLE_COUNT) + '|no_class'
+        if eres_key in ENCODING_RESULTS:
+            ENCODING_RESULTS[eres_key][1] = False
+        eres_key = CONVERTIBLE.__name__ + '|' + str(CONVERTIBLE_COUNT) + '|class'
+        if eres_key in ENCODING_RESULTS:
+            ENCODING_RESULTS[eres_key][1] = False
     key, key_indx = KEYS[indx]
     for indx2 in range(CONVERTIBLE_COUNT):
         data['key' + str(key_indx+indx2)] = CONVERTIBLE()
 
 def restore_data(data, indx):                              # ||:fnc:||
+    #global DATA
+    #DATA = copy.deepcopy(SV_DATA)
     key, key_indx = KEYS[indx]
     for indx2 in range(CONVERTIBLE_COUNT):
         data['key' + str(key_indx+indx2)] = key_indx + indx2
@@ -555,18 +622,19 @@ def check_type_with_json_then_bson_prof(key, val, dcopy):  # ||:fnc:||
                 check_type_with_json_then_bson_prof(key, val, state)
 
 def encode_waste_some_space_and_time_converting_data_with_json_bson_default_prof(data): # ||:fnc:||
-    dcopy = dict()
+    dcopy = dict_type()
     for key, val in ditems(data):
         wt = check_type_with_json_then_bson_prof(key, val, dcopy)
-    bson.BSON.encode(dcopy)
+    return bson.BSON.encode(dcopy)
 
 def waste_some_space_and_time_converting_data_with_json_bson_default_prof(): # ||:fnc:||
     # works always
     data = DATA
     for indx in range(CYCLES):
         prepare_data(data, indx)
-        encode_waste_some_space_and_time_converting_data_with_json_bson_default_prof(data)
+        eres = encode_waste_some_space_and_time_converting_data_with_json_bson_default_prof(data)
         restore_data(data, indx)
+        check_encoding_result(eres, indx)
 
 PROFILING['waste_some_space_and_time_converting_data_with_json_bson_default'] = \
 waste_some_space_and_time_converting_data_with_json_bson_default_prof
@@ -612,11 +680,12 @@ def waste_some_space_and_time_converting_data_with_json_bson_default(ref_time): 
     for indx in range(CYCLES):
         prepare_data(data, indx)
         wt = wasted_time
-        dcopy = dict()
+        dcopy = dict_type()
         for key, val in ditems(data):
             wt = check_type_with_json_then_bson(key, val, dcopy, wt, totally_wasted_time, json_time, bson_time)
-        bson.BSON.encode(dcopy)
+        eres = bson.BSON.encode(dcopy)
         restore_data(data, indx)
+        check_encoding_result(eres, indx)
     total_end = datetime.now()
     total_time = total_end-total_start
     report_times(total_time, wasted_time, totally_wasted_time, ref_time=ref_time, json_time=json_time, bson_time=bson_time)
@@ -639,18 +708,19 @@ def check_type_with_BSON_enc_prof(key, val, dcopy):        # ||:fnc:||
             check_type_with_BSON_enc_prof(key, val, state)
 
 def encode_waste_some_space_and_time_converting_data_with_BSON_enc_prof(data): # ||:fnc:||
-    dcopy = dict()
+    dcopy = dict_type()
     for key, val in ditems(data):
         check_type_with_BSON_enc_prof(key, val, dcopy)
-    bson.BSON.encode(dcopy)
+    return bson.BSON.encode(dcopy)
 
 def waste_some_space_and_time_converting_data_with_BSON_enc_prof(): # ||:fnc:||
     # works always
     data = DATA
     for indx in range(CYCLES):
         prepare_data(data, indx)
-        encode_waste_some_space_and_time_converting_data_with_BSON_enc_prof(data)
+        eres = encode_waste_some_space_and_time_converting_data_with_BSON_enc_prof(data)
         restore_data(data, indx)
+        check_encoding_result(eres, indx)
 
 PROFILING['waste_some_space_and_time_converting_data_with_BSON_enc'] = \
 waste_some_space_and_time_converting_data_with_BSON_enc_prof
@@ -684,12 +754,13 @@ def waste_some_space_and_time_converting_data_with_BSON_encode(ref_time): # ||:f
     total_start = datetime.now()
     for indx in range(CYCLES):
         prepare_data(data, indx)
-        dcopy = dict()
+        dcopy = dict_type()
         wt = wasted_time
         for key, val in ditems(data):
             wt = check_type_with_BSON_encode(key, val, dcopy, wt, totally_wasted_time)
-        bson.BSON.encode(dcopy)
+        eres = bson.BSON.encode(dcopy)
         restore_data(data, indx)
+        check_encoding_result(eres, indx)
     total_end = datetime.now()
     total_time = total_end-total_start
     report_times(total_time, wasted_time, totally_wasted_time, ref_time=ref_time)
@@ -711,17 +782,18 @@ def check_type_with_dict_to_bson_prof(key, val, dcopy):    # ||:fnc:||
             check_type_with_dict_to_bson_prof(key, val, state)
 
 def encode_waste_some_space_and_time_converting_data_with_dict_to_bson_prof(data): # ||:fnc:||
-    dcopy = dict()
+    dcopy = dict_type()
     for key, val in ditems(data):
         check_type_with_dict_to_bson_prof(key, val, dcopy)
-    bson.BSON.encode(dcopy)
+    return bson.BSON.encode(dcopy)
 
 def waste_some_space_and_time_converting_data_with_dict_to_bson_prof(): # ||:fnc:||
     data = DATA
     for indx in range(CYCLES):
         prepare_data(data, indx)
-        encode_waste_some_space_and_time_converting_data_with_dict_to_bson_prof(data)
+        eres = encode_waste_some_space_and_time_converting_data_with_dict_to_bson_prof(data)
         restore_data(data, indx)
+        check_encoding_result(eres, indx)
 
 PROFILING['waste_some_space_and_time_converting_data_with_dict_to_bson'] = \
 waste_some_space_and_time_converting_data_with_dict_to_bson_prof
@@ -736,7 +808,7 @@ except TypeError:
         _dict_to_bson_args.extend((False,))
     except TypeError:
         pass
-    
+
 def check_type_with_dict_to_bson(key, val, dcopy, wt, totally_wasted_time): # ||:fnc:||
     start = datetime.now()
     try:
@@ -767,11 +839,12 @@ def waste_some_space_and_time_converting_data_with_dict_to_bson(ref_time): # ||:
     for indx in range(CYCLES):
         prepare_data(data, indx)
         wt = wasted_time
-        dcopy = dict()
+        dcopy = dict_type()
         for key, val in ditems(data):
             wt = check_type_with_dict_to_bson(key, val, dcopy, wt, totally_wasted_time)
-        bson.BSON.encode(dcopy)
+        eres = bson.BSON.encode(dcopy)
         restore_data(data, indx)
+        check_encoding_result(eres, indx)
     total_end = datetime.now()
     total_time = total_end-total_start
     report_times(total_time, wasted_time, totally_wasted_time, ref_time=ref_time)
@@ -796,18 +869,19 @@ def check_type_with_element_to_bson_prof(key, val, dcopy): # ||:fnc:||
             check_type_with_element_to_bson_prof(key, val, state)
 
 def encode_waste_some_space_and_time_converting_data_with_element_to_bson_prof(data): # ||:fnc:||
-    dcopy = dict()
+    dcopy = dict_type()
     for key, val in ditems(data):
         check_type_with_element_to_bson_prof(key, val, dcopy)
-    bson.BSON.encode(dcopy)
+    return bson.BSON.encode(dcopy)
 
 def waste_some_space_and_time_converting_data_with_element_to_bson_prof(): # ||:fnc:||
     # works always
     data = DATA
     for indx in range(CYCLES):
         prepare_data(data, indx)
-        encode_waste_some_space_and_time_converting_data_with_element_to_bson_prof(data)
+        eres = encode_waste_some_space_and_time_converting_data_with_element_to_bson_prof(data)
         restore_data(data, indx)
+        check_encoding_result(eres, indx)
 
 PROFILING['waste_some_space_and_time_converting_data_with_element_to_bson'] = \
 waste_some_space_and_time_converting_data_with_element_to_bson_prof
@@ -845,11 +919,12 @@ def waste_some_space_and_time_converting_data_with_element_to_bson(ref_time): # 
     for indx in range(CYCLES):
         wt = wasted_time
         prepare_data(data, indx)
-        dcopy = dict()
+        dcopy = dict_type()
         for key, val in ditems(data):
             wt = check_type_with_element_to_bson(key, val, dcopy, wt, totally_wasted_time)
-        bson.BSON.encode(dcopy)
+        eres = bson.BSON.encode(dcopy)
         restore_data(data, indx)
+        check_encoding_result(eres, indx)
     total_end = datetime.now()
     total_time = total_end-total_start
     report_times(total_time, wasted_time, totally_wasted_time, ref_time=ref_time)
@@ -860,7 +935,7 @@ def waste_some_space_and_time_converting_data_with_element_to_bson(ref_time): # 
 # --------------------------------------------------
 
 def encode_waste_some_time_with_wrapped_python_element_to_bson_prof(data): # ||:fnc:||
-    bson.BSON.encode(data)
+    return bson.BSON.encode(data)
 
 def waste_some_time_with_wrapped_python_element_to_bson_prof(): # ||:fnc:||
     # works always
@@ -880,8 +955,9 @@ def waste_some_time_with_wrapped_python_element_to_bson_prof(): # ||:fnc:||
     try:
         for indx in range(CYCLES):
             prepare_data(data, indx)
-            encode_waste_some_time_with_wrapped_python_element_to_bson_prof(data)
+            eres = encode_waste_some_time_with_wrapped_python_element_to_bson_prof(data)
             restore_data(data, indx)
+            check_encoding_result(eres, indx)
     except Exception:
         (t, e, tb) = sys.exc_info()
         printe(''.join(traceback.format_tb(tb)))
@@ -923,8 +999,9 @@ def waste_some_time_with_wrapped_python_element_to_bson(ref_time): # ||:fnc:||
         for indx in range(CYCLES):
             prepare_data(data, indx)
             # encode with wrapped _element_to_bson
-            bson.BSON.encode(data)
+            eres = bson.BSON.encode(data)
             restore_data(data, indx)
+            check_encoding_result(eres, indx)
     except Exception:
         (t, e, tb) = sys.exc_info()
         printe(''.join(traceback.format_tb(tb)))
@@ -945,7 +1022,7 @@ def waste_some_time_with_wrapped_python_element_to_bson(ref_time): # ||:fnc:||
 # --------------------------------------------------
 
 def encode_dont_waste_time_with_get_object_state_feature_prof(data):  # ||:fnc:||
-    bson.BSON.encode(data)
+    return bson.BSON.encode(data)
 
 def dont_waste_time_with_get_object_state_feature_prof():  # ||:fnc:||
     # works always
@@ -964,8 +1041,9 @@ def dont_waste_time_with_get_object_state_feature_prof():  # ||:fnc:||
     try:
         for indx in range(CYCLES):
             prepare_data(data, indx)
-            encode_dont_waste_time_with_get_object_state_feature_prof(data)
+            eres = encode_dont_waste_time_with_get_object_state_feature_prof(data)
             restore_data(data, indx)
+            check_encoding_result(eres, indx)
     except Exception:
         (t, e, tb) = sys.exc_info()
         printe(''.join(traceback.format_tb(tb)))
@@ -1004,8 +1082,9 @@ def dont_waste_time_with_get_object_state_feature(ref_time): # ||:fnc:||
         for indx in range(CYCLES):
             prepare_data(data, indx)
             # encode with get_object_state
-            bson.BSON.encode(data)
+            eres = bson.BSON.encode(data)
             restore_data(data, indx)
+            check_encoding_result(eres, indx)
     except Exception:
         (t, e, tb) = sys.exc_info()
         printe(''.join(traceback.format_tb(tb)))
@@ -1024,7 +1103,7 @@ def dont_waste_time_with_get_object_state_feature(ref_time): # ||:fnc:||
 # --------------------------------------------------
 
 def encode_dont_waste_time_with_getstate_hook_feature_prof(data):  # ||:fnc:||
-    bson.BSON.encode(data)
+    return bson.BSON.encode(data)
 
 def dont_waste_time_with_getstate_hook_feature_prof():     # ||:fnc:||
     # works always
@@ -1041,8 +1120,9 @@ def dont_waste_time_with_getstate_hook_feature_prof():     # ||:fnc:||
     try:
         for indx in range(CYCLES):
             prepare_data(data, indx)
-            encode_dont_waste_time_with_getstate_hook_feature_prof(data)
+            eres = encode_dont_waste_time_with_getstate_hook_feature_prof(data)
             restore_data(data, indx)
+            check_encoding_result(eres, indx)
     except Exception:
         (t, e, tb) = sys.exc_info()
         printe(''.join(traceback.format_tb(tb)))
@@ -1075,8 +1155,9 @@ def dont_waste_time_with_getstate_hook_feature(ref_time):  # ||:fnc:||
         for indx in range(CYCLES):
             prepare_data(data, indx)
             # encode with getstate_hook
-            bson.BSON.encode(data)
+            eres = bson.BSON.encode(data)
             restore_data(data, indx)
+            check_encoding_result(eres, indx)
     except Exception:
         (t, e, tb) = sys.exc_info()
         printe(''.join(traceback.format_tb(tb)))
@@ -1095,7 +1176,7 @@ def dont_waste_time_with_getstate_hook_feature(ref_time):  # ||:fnc:||
 # --------------------------------------------------
 
 def encode_dont_waste_time_with_dict_hook_feature_prof(data): # ||:fnc:||
-    bson.BSON.encode(data)
+    return bson.BSON.encode(data)
 
 def dont_waste_time_with_dict_hook_feature_prof():         # ||:fnc:||
     # works always
@@ -1112,8 +1193,9 @@ def dont_waste_time_with_dict_hook_feature_prof():         # ||:fnc:||
     try:
         for indx in range(CYCLES):
             prepare_data(data, indx)
-            encode_dont_waste_time_with_dict_hook_feature_prof(data)
+            eres = encode_dont_waste_time_with_dict_hook_feature_prof(data)
             restore_data(data, indx)
+            check_encoding_result(eres, indx)
     except Exception:
         (t, e, tb) = sys.exc_info()
         printe(''.join(traceback.format_tb(tb)))
@@ -1146,8 +1228,9 @@ def dont_waste_time_with_dict_hook_feature(ref_time):      # ||:fnc:||
         for indx in range(CYCLES):
             prepare_data(data, indx)
             # encode with dict_hook
-            bson.BSON.encode(data)
+            eres = bson.BSON.encode(data)
             restore_data(data, indx)
+            check_encoding_result(eres, indx)
     except Exception:
         (t, e, tb) = sys.exc_info()
         printe(''.join(traceback.format_tb(tb)))
@@ -1167,7 +1250,7 @@ def dont_waste_time_with_dict_hook_feature(ref_time):      # ||:fnc:||
 # --------------------------------------------------
 
 def encode_dont_waste_time_with_bson_hook_feature_prof(data): # ||:fnc:||
-    bson.BSON.encode(data)
+    return bson.BSON.encode(data)
 
 def dont_waste_time_with_bson_hook_feature_prof():         # ||:fnc:||
     # works always
@@ -1184,8 +1267,9 @@ def dont_waste_time_with_bson_hook_feature_prof():         # ||:fnc:||
     try:
         for indx in range(CYCLES):
             prepare_data(data, indx)
-            encode_dont_waste_time_with_bson_hook_feature_prof(data)
+            eres = encode_dont_waste_time_with_bson_hook_feature_prof(data)
             restore_data(data, indx)
+            check_encoding_result(eres, indx, 'class')
     except Exception:
         (t, e, tb) = sys.exc_info()
         printe(''.join(traceback.format_tb(tb)))
@@ -1218,8 +1302,9 @@ def dont_waste_time_with_bson_hook_feature(ref_time):      # ||:fnc:||
         for indx in range(CYCLES):
             prepare_data(data, indx)
             # encode with bson_hook
-            bson.BSON.encode(data)
+            eres = bson.BSON.encode(data)
             restore_data(data, indx)
+            check_encoding_result(eres, indx, 'class')
     except Exception:
         (t, e, tb) = sys.exc_info()
         printe(''.join(traceback.format_tb(tb)))
@@ -1372,7 +1457,7 @@ def profile_run(keep_details):                             # ||:fnc:||
         code_type = 'c'
     else:
         code_type = 'py'
-    version_ext = '_py' + str(sys.version_info[0]) + '_pymongo' + pymongo_version + '_' + code_type
+    version_ext = '_' + dict_type.__name__ + '_py' + str(sys.version_info[0]) + '_pymongo' + pymongo_version + '_' + code_type
     title = ' - Python' + str(sys.version_info[0]) + ' - pymongo ' + pymongo_version + ' - ' + code_type
     outputs = []
     for profile, method in ditems(PROFILING):
@@ -1465,6 +1550,14 @@ def run(parameters, pass_opts):                            # ||:fnc:||
     keep_details = False # |:config:|
 
     ref_time = parameters.ref_time
+
+    if parameters.dict_type is not None:
+        global dict_type
+        dict_type = eval(parameters.dict_type)
+
+    if parameters.check:
+        global CHECK_RESULT
+        CHECK_RESULT = True
 
     if parameters.calibrate:
         # |:info:| really not needed, since cProfile cannot be calibrated
@@ -1583,17 +1676,23 @@ def main(argv):                                            # ||:fnc:||
     #                    help='sum the integers (default: find the max)')
     # |:opt:| add options
     parser.add_argument(
+        '-c', '--check', action='store_true',
+        help='check encoding result')
+    parser.add_argument(
+        '--dict-type', action='store', type=str, metavar='DICT',
+        default=None, help='dict type to use for data (default: OrderedDict)')
+    parser.add_argument(
         '-p', '--profile', action='store_true',
         help='run with profiler')
     parser.add_argument(
         '-s', '--stats', action='store_true',
         help='print profiler statistics')
     parser.add_argument(
-        '-c', '--calibrate', action='store_true',
-        help='calibrate profiler')
-    parser.add_argument(
         '-r', '--ref-time', action='store', type=float, metavar='FLOAT',
         default = None, help='reference time')
+    parser.add_argument(
+        '--calibrate', action='store_true',
+        help='calibrate profiler')
     parser.add_argument(
         '-q', '--quiet', action='store_true',
         help='suppress warnings')
@@ -1796,6 +1895,18 @@ if __name__ == "__main__":
 
 # :ide: COMPILE: Run with --stats
 # . (progn (save-buffer) (compile (concat "python ./" (file-name-nondirectory (buffer-file-name)) " --stats")))
+
+# :ide: COMPILE: Run with python3 with --profile --check
+# . (progn (save-buffer) (compile (concat "python3 ./" (file-name-nondirectory (buffer-file-name)) " --profile --check")))
+
+# :ide: COMPILE: Run with --profile --check
+# . (progn (save-buffer) (compile (concat "python ./" (file-name-nondirectory (buffer-file-name)) " --profile --check")))
+
+# :ide: COMPILE: Run with python3 with --dict-type SON --profile
+# . (progn (save-buffer) (compile (concat "python3 ./" (file-name-nondirectory (buffer-file-name)) " --dict-type SON --profile")))
+
+# :ide: COMPILE: Run with --dict-type SON --profile
+# . (progn (save-buffer) (compile (concat "python ./" (file-name-nondirectory (buffer-file-name)) " --dict-type SON --profile")))
 
 # :ide: COMPILE: Run with python3 with --profile
 # . (progn (save-buffer) (compile (concat "python3 ./" (file-name-nondirectory (buffer-file-name)) " --profile")))
