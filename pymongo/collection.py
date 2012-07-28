@@ -205,7 +205,7 @@ class Collection(common.BaseObject):
                             used for this collection.""")
 
     def save(self, to_save, manipulate=True,
-             safe=False, check_keys=True, **kwargs):
+             safe=None, check_keys=True, **kwargs):
         """Save a document in this collection.
 
         If `to_save` already has an ``"_id"`` then an :meth:`update`
@@ -258,7 +258,7 @@ class Collection(common.BaseObject):
             return to_save.get("_id", None)
 
     def insert(self, doc_or_docs, manipulate=True,
-               safe=False, check_keys=True, continue_on_error=False, **kwargs):
+               safe=None, check_keys=True, continue_on_error=False, **kwargs):
         """Insert a document(s) into this collection.
 
         If `manipulate` is ``True``, the document(s) are manipulated using
@@ -321,21 +321,17 @@ class Collection(common.BaseObject):
         if manipulate:
             docs = [self.__database._fix_incoming(doc, self) for doc in docs]
 
-        if self.safe or kwargs:
-            safe = True
-            if not kwargs:
-                kwargs.update(self.get_lasterror_options())
-
+        safe, options = self._get_safe_and_lasterror_options(safe, **kwargs)
         self.__database.connection._send_message(
             message.insert(self.__full_name, docs,
-                           check_keys, safe, kwargs,
+                           check_keys, safe, options,
                            continue_on_error, self.__uuid_subtype, self.__context), safe)
 
         ids = [doc.get("_id", None) for doc in docs]
         return return_one and ids[0] or ids
 
     def update(self, spec, document, upsert=False, manipulate=False,
-               safe=False, multi=False, _check_keys=False, **kwargs):
+               safe=None, multi=False, _check_keys=False, **kwargs):
         """Update a document(s) in this collection.
 
         Raises :class:`TypeError` if either `spec` or `document` is
@@ -417,17 +413,14 @@ class Collection(common.BaseObject):
         if manipulate:
             document = self.__database._fix_incoming(document, self)
 
-        if self.safe or kwargs:
-            safe = True
-            if not kwargs:
-                kwargs.update(self.get_lasterror_options())
+        safe, options = self._get_safe_and_lasterror_options(safe, **kwargs)
 
         # _check_keys is used by save() so we don't upsert pre-existing
         # documents after adding an invalid key like 'a.b'. It can't really
         # be used for any other update operations.
         return self.__database.connection._send_message(
             message.update(self.__full_name, upsert, multi,
-                           spec, document, safe, kwargs,
+                           spec, document, safe, options,
                            _check_keys, self.__uuid_subtype, self.__context), safe)
 
     def drop(self):
@@ -442,7 +435,7 @@ class Collection(common.BaseObject):
         """
         self.__database.drop_collection(self.__name)
 
-    def remove(self, spec_or_id=None, safe=False, context=None, **kwargs):
+    def remove(self, spec_or_id=None, safe=None, context=None, **kwargs):
         """Remove a document(s) from this collection.
 
         .. warning:: Calls to :meth:`remove` should be performed with
@@ -497,14 +490,10 @@ class Collection(common.BaseObject):
         if not isinstance(spec_or_id, dict):
             spec_or_id = {"_id": spec_or_id}
 
-        if self.safe or kwargs:
-            safe = True
-            if not kwargs:
-                kwargs.update(self.get_lasterror_options())
-        
+        safe, options = self._get_safe_and_lasterror_options(safe, **kwargs)
         return self.__database.connection._send_message(
-            message.delete(self.__full_name, spec_or_id,
-                           safe, kwargs, self.__uuid_subtype, self.__context), safe)
+            message.delete(self.__full_name, spec_or_id, safe,
+                           options, self.__uuid_subtype, self.__context), safe)
 
     def find_one(self, spec_or_id=None, *args, **kwargs):
         """Get a single document from the database.
