@@ -12,7 +12,6 @@ if not os.path.isdir('pymongo_context/pymongo_context'):
 shutil.copyfile('README-context-extension.rst', 'pymongo_context/README.txt')
 shutil.copyfile('pymongo_context.py', 'pymongo_context/pymongo_context/__init__.py')
 shutil.copyfile('waste_of_time.py', 'pymongo_context/waste_of_time.py')
-shutil.copyfile('waste_of_time_stats.py', 'pymongo_context/waste_of_time_stats.py')
 shutil.copyfile('bson/context.py', 'pymongo_context/pymongo_context/bson_context.py')
 os.chdir('pymongo_context')
 
@@ -44,7 +43,6 @@ mf = open('MANIFEST.in', 'w')
 mf.write('''
 include README.txt
 include waste_of_time.py
-include waste_of_time_stats.py
 ''')
 mf.close()
 
