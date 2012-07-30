@@ -60,10 +60,45 @@ except AttributeError:
 import threading
 import copy
 class Context(object):                                     # ||:cls:||
-    '''BSON encoding/decoding configuration context.
+    """BSON encoding/decoding configuration context.
+
+    **C Extension (De-)Activation**
+
+    Encoding/decoding functions are retrieved from :class:`Context`
+    attributes. The active set of functions can be switched with
+    :meth:`enable_c`, :meth:`enable_c_encoding`,
+    :meth:`enable_c_decoding`. Methods :meth:`is_c_enabled`,
+    :meth:`is_c_encoding_enabled`, :meth:`is_c_decoding_enabled` are
+    used to determine the active function set.
+
+    **Automatic Object Conversion**
+
+    :attr:`object_state_hooks` holds parameters for object attributes
+    that are used, when an object cannot be converted::
+
+        [(attribute_name, dict_required), ...]
+
+    E.g.::
+
+        context.object_state_hooks = [('__bson__', False), ('__getstate__', True), ('__dict__', True)]
+
+    If an object attribute is found and provides the :meth:` __call__`
+    interface, it is invoked as a method, otherwise the attribute
+    value is used as is.
+
+    :attr:`get_object_state` holds a last resort callback to retrieve
+    an object's state::
+
+        valid, result = context.get_object_state(obj, need_dict)
+
+    **Context Locking**
+
+    The :attr:`lock` attribute is used to serialize access to the
+    context. It is internally used by the :meth:`__getstate__` and
+    :meth:`__setstate__` methods.
 
     .. versionadded:: 2.2.1-fork
-    '''
+    """
     # class attributes
     _attrib_ = list()
     _defaults_ = SON((
@@ -81,16 +116,8 @@ class Context(object):                                     # ||:cls:||
         ('_get_more_message', None),
 
         # object_state_hooks:
-        # [(attribute_name, dict_required), ...]
-        # If attribute provides __call__ interface, it is invoked as a method,
-        # otherwise the attribute is used as is.
-        # e.g.
-        # [('__bson__', False), ('__getstate__', True), ('__dict__', True)]
-        # ('object_state_hooks', [('__bson__', False)]),
         ('object_state_hooks', []),
 
-        # last resort callback to retrieve object state:
-        # valid, result = get_object_state(obj, need_dict)
         ('get_object_state', None),
 
         # document class, when context is used as `as_class` parameter

@@ -25,6 +25,7 @@ Works with PyMongo driver fork at
 https://github.com/wolfmanx/mongo-python-driver
 '''
 
+import sys
 import ast
 import copy
 import pkgutil
@@ -37,8 +38,24 @@ try:
     bson_context = bson.context
     must_patch = False
 except ImportError:
-    import bson_context
+    try:
+        from pymongo_context import bson_context
+    except ImportError:
+        if __name__ == '__main__':
+            sys.modules['pymongo_context'] = sys.modules['__main__']
+        import bson_context
+        sys.modules['pymongo_context.bson_context'] = bson_context
     must_patch = True
+
+try:
+    getattr(dict(), 'iteritems')
+    ditems  = lambda d: getattr(d, 'iteritems')()
+    dkeys   = lambda d: getattr(d, 'iterkeys')()
+    dvalues = lambda d: getattr(d, 'itervalues')()
+except AttributeError:
+    ditems  = lambda d: getattr(d, 'items')()
+    dkeys   = lambda d: getattr(d, 'keys')()
+    dvalues = lambda d: getattr(d, 'values')()
 
 # --------------------------------------------------
 # |||:sec:||| Dump Utilities
@@ -52,6 +69,20 @@ def match_object_attribs(obj, pattern):                    # ||:fnc:||
             attribs.append(attr)
     return attribs
 
+def dump_dict(dct, exclude=None, include=None, sorted_=None):          # ||:fnc:||
+    if exclude is None:
+        exclude = list()
+    if sorted_:
+        items = sorted(ditems(dct))
+    else:
+        items = ditems(dct)
+    for attr, value in items:
+        if include is not None and attr not in include:
+            continue
+        if attr in exclude:
+            continue
+        print('{0:<25s}: {1!r}'.format(attr, value))
+
 def dump_object(obj, exclude=None, include=None):          # ||:fnc:||
     if exclude is None:
         exclude = list()
@@ -60,12 +91,7 @@ def dump_object(obj, exclude=None, include=None):          # ||:fnc:||
         '__builtins__',
         '__doc__',
         ))
-    for attr, value in sorted(vars(obj).items()):
-        if include is not None and attr not in include:
-            continue
-        if attr in _exclude:
-            continue
-        print('{0:<25s}: {1!r}'.format(attr, value))
+    dump_dict(vars(obj), exclude=_exclude, include=include, sorted_=True)
 
 def dump_bson():                                           # ||:fnc:||
     dump_object(bson,
@@ -236,7 +262,7 @@ if False:
 # --------------------------------------------------
 # |||:sec:||| BSON Module Patch Setup
 # --------------------------------------------------
-    from bson_context import *
+    from pymongo_context.bson_context import *
     _context = Context()
     _default_ctx = _context
     _thread_ctx = ThreadContext()
@@ -276,7 +302,7 @@ if False:
     # wrapper around _element_to_bson to support object_state_hooks
     _context.setDefault('_element_to_bson', _element_to_bson)
 
-    def _try_object_hooks(value, need_dict):
+    def _try_object_hooks(value, need_dict, context):
         ctx = _context
         hook_defs = ctx.object_state_hooks
         for hook_def in hook_defs:
@@ -298,7 +324,7 @@ if False:
             valid, result = get_object_state(value, need_dict)
             if valid and (not need_dict or isinstance(result, dict)):
                 return (True, result)
-            
+
         return (False, None)
 
     import sys
@@ -307,7 +333,8 @@ if False:
             return _context._element_to_bson(key, value, *args)
         except InvalidDocument:
             (t, e, tb) = sys.exc_info()
-            valid, converted = _try_object_hooks(value, False)
+            del(tb)
+            valid, converted = _try_object_hooks(value, False, None)
             if valid:
                 return _context._element_to_bson(key, converted, *args)
             raise e

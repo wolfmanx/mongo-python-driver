@@ -426,16 +426,10 @@ def _element_to_bson(key, value, check_keys, uuid_subtype, context):
         length = struct.pack("<i", len(cstring))
         return BSONSTR + name + length + cstring
     if isinstance(value, dict):
-        try:
-            return BSONOBJ + name + ctx._dict_to_bson(value, check_keys, uuid_subtype, False, context)
-        except TypeError:
-            return BSONOBJ + name + ctx._dict_to_bson(value, check_keys, uuid_subtype, context)
+        return BSONOBJ + name + ctx._dict_to_bson(value, check_keys, uuid_subtype, False, context)
     if isinstance(value, (list, tuple)):
         as_dict = SON(zip([str(i) for i in range(len(value))], value))
-        try:
-            return BSONARR + name + ctx._dict_to_bson(as_dict, check_keys, uuid_subtype, False, context)
-        except TypeError:
-            return BSONARR + name + ctx._dict_to_bson(as_dict, check_keys, uuid_subtype, context)
+        return BSONARR + name + ctx._dict_to_bson(as_dict, check_keys, uuid_subtype, False, context)
     if isinstance(value, ObjectId):
         return BSONOID + name + value.binary
     if value is True:
@@ -509,7 +503,7 @@ def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True, context=None):
         for (key, value) in dict.iteritems():
             if not top_level or key != "_id":
                 elements.append(_element_to_bson(key, value, check_keys, uuid_subtype, context))
-    except AttributeError:
+    except (AttributeError, TypeError):
         valid, converted = _try_object_hooks(dict, True, context)
         if valid:
             return ctx._dict_to_bson(converted, check_keys, uuid_subtype, top_level, context)
@@ -526,11 +520,7 @@ else:
 def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True, context=None):
     ctx = context or _context
     check_context(ctx)
-    try:
-        return ctx._dict_to_bson(dict, check_keys, uuid_subtype, top_level, context)
-    except TypeError:
-        # C extension behaves differently see https://jira.mongodb.org/browse/PYTHON-380
-        return ctx._dict_to_bson(dict, check_keys, uuid_subtype, context)
+    return ctx._dict_to_bson(dict, check_keys, uuid_subtype, top_level, context)
 
 def decode_all(data, as_class=dict, tz_aware=True):
     """Decode BSON data to multiple documents.
@@ -616,7 +606,7 @@ class BSON(binary_type):
         """
         ctx = context or _context
         check_context(ctx)
-        return cls(ctx._dict_to_bson(document, check_keys, uuid_subtype, ctx))
+        return cls(ctx._dict_to_bson(document, check_keys, uuid_subtype, True, ctx))
 
     def decode(self, as_class=dict, tz_aware=False):
         """Decode this BSON data.
