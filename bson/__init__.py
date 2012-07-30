@@ -504,7 +504,7 @@ def _dict_to_bson(dict, check_keys, uuid_subtype, top_level=True, context=None):
         for (key, value) in dict.iteritems():
             if not top_level or key != "_id":
                 elements.append(_element_to_bson(key, value, check_keys, uuid_subtype, context))
-    except AttributeError:
+    except (AttributeError, TypeError):
         valid, converted = _try_object_hooks(dict, True, context)
         if valid:
             return ctx._dict_to_bson(converted, check_keys, uuid_subtype, top_level, context)
