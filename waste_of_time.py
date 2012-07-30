@@ -20,7 +20,7 @@ Options
   -s, --stats           print profiler statistics
   -r, --ref-time=FLOAT  reference time
 
-  -c, --calibrate       calibrate profiler (not needed for cProfile)
+  --calibrate           calibrate profiler (not needed for cProfile)
 
   -q, --quiet           suppress warnings
   -v, --verbose         verbose test output
