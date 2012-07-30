@@ -318,7 +318,8 @@ class TestBSONContext(unittest.TestCase):                  # ||:cls:||
                 collection_name, docs, check_keys,
                 safe, last_error_args, continue_on_error, uuid_subtype, context)[1]
             result_c = result_c[:4] + result_c[9:]
-            self.assertTrue(last_context_vector_was_c[-1])
+            if context.is_c_enabled():
+                self.assertTrue(last_context_vector_was_c[-1])
 
             context.enable_c(False)
             result_p = pymongo.message.insert(
