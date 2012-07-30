@@ -29,14 +29,13 @@
 .. \||<-snap->|| skip
 .. \||<-snap->|| include ^index-header.snip$
 
-Provides application specific C extension activation/deactivation and
-a full vertical BSON context for encoding objects.
+Provides application specific C extension (de-)activation and a full
+vertical BSON context for encoding objects.
 
 .. warning:: This is an expert module, which does not protect against
-             uninformed mistakes. If you wish to be protected, use the
-             official driver. If you do not want to take
-             responsibility for your actions, do not use this
-             extension.
+   uninformed mistakes. Although it won't corrupt your database, you
+   should still consider carefully whether you need any of the
+   features.
 
 ==================================================
 :rem:`|||:sec:|||`\ Rationale
@@ -45,18 +44,20 @@ a full vertical BSON context for encoding objects.
 Currently, the C extensions for PyMongo/BSON can only be
 enabled/disabled with site-wide installation options.
 
-If the C extensions should be disabled (for e.g. mod_wsgi) virtual_env
+If the C extensions must be disabled (for e.g. mod_wsgi) virtual_env
 has to be used, if the standard installation should not be modified.
 
 SON manipulators can be used to automate object conversion, when
 writing into a MongoDB database.  However, SON manipulators only work
-in the database layer of PyMongo.
+in the database layer of PyMongo and require copying the entire
+document tree, if the original has to be preserved.
 
 When the :mod:`bson` module is used as a standalone serialization
-protocol, you are out of luck.
+protocol, you are out of luck. Since there is currently no provision
+in the BSON encoder to allow graceful recovery on a per-element basis.
 
-There is currently no provision in the BSON encoder to allow graceful
-recovery on a per-element basis.
+Writing both a SON manipulator and a document expander is redundant,
+since they basically perform the same task.
 
 ==================================================
 :rem:`|||:sec:|||`\ Caveat
@@ -66,7 +67,7 @@ This extension works on the BSON encoding/decoding level.
 
 It is perfectly possible to postpone object conversion to that stage.
 This will, however, make SON manipulators for outgoing transformations
-effectively defunct below the top level.
+on unexpanded objects effectively defunct.
 
 Currently there is only one SON manipulator active, namely
 :class:`pymongo.son_manipulator.ObjectIdInjector`, which provides an

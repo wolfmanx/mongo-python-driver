@@ -3,8 +3,7 @@ Context Extension
 =================
 
 .. warning:: This is an unofficial fork of the original PyMongo
-             driver. Read README-context-extension before using
-             it.
+   driver. See README-context-extension.rst before using it.
 
 =======
 PyMongo
