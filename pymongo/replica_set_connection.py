@@ -14,8 +14,8 @@
 
 """Tools for connecting to a MongoDB replica set.
 
-.. seealso:: :doc:`/examples/replica_set` for more examples of how to
-   connect to a replica set.
+.. seealso:: :doc:`/examples/high_availability` for more examples of
+   how to connect to a replica set.
 
 To get a :class:`~pymongo.database.Database` instance from a
 :class:`ReplicaSetConnection` use either dictionary-style or
@@ -328,7 +328,7 @@ class ReplicaSetConnection(common.BaseObject):
             connection.Connection.
 
 
-        .. versionchanged:: 2.2.1+
+        .. versionchanged:: 2.3
            Added `tag_sets` and `secondary_acceptable_latency_ms` options.
         .. versionchanged:: 2.2
            Added `auto_start_request` and `use_greenlets` options.
@@ -587,7 +587,7 @@ class ReplicaSetConnection(common.BaseObject):
     def is_mongos(self):
         """If this ReplicaSetConnection is connected to mongos (always False)
 
-        .. versionadded:: 2.2.1+
+        .. versionadded:: 2.3
         """
         return False
 
