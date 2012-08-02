@@ -99,19 +99,6 @@ _context.setDefault('_use_c_encoding', _use_c)
 _context.setDefault('_use_c_decoding', _use_c)
 
 check_context = lambda x: None
-
-def dbg_check_context(context):         # |:debug:|
-    '''bson.check_context = bson.dbg_check_context'''
-    if context is None:
-        return
-    return dbg_check_context_required(context)
-
-def dbg_check_context_required(context):
-    '''bson.check_context = bson.dbg_check_context_required'''
-    if not isinstance(context, Context):
-        import traceback
-        traceback.print_stack()
-        raise TypeError('not a BSON context' + repr(context))
 # |:sec:| end
 
 def _get_int(data, position, as_class=None, tz_aware=False, unsigned=False):
