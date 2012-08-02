@@ -268,6 +268,7 @@ if False:
     _thread_ctx = ThreadContext()
     _context.setDefault('_use_c_encoding', _use_c)
     _context.setDefault('_use_c_decoding', _use_c)
+    check_context = lambda x: None
 
     if _use_c:
         _context._register_decoding_alternative('_bson_to_dict', _py_bson_to_dict, _cbson._bson_to_dict)
@@ -728,7 +729,7 @@ if __name__ == '__main__':
             continue_on_error = True
 
             sv_context = bson.lock()
-            if False:
+            if True:
                 sv_check_context = bson.check_context
                 sv_message_check_context = pymongo.message.check_context
             sv_message_insert = pymongo.message.insert
@@ -746,7 +747,7 @@ if __name__ == '__main__':
                 return sv_message_insert(*args, **kwargs)
 
             try:
-                if False:
+                if True:
                     bson.check_context = bson.dbg_check_context_required
                     pymongo.message.check_context = bson.dbg_check_context_required
                 pymongo.message.insert = dbg_insert
@@ -773,7 +774,7 @@ if __name__ == '__main__':
 
             finally:
                 pymongo.message.insert = sv_message_insert
-                if False:
+                if True:
                     pymongo.message.check_context = sv_message_check_context
                     bson.check_context = sv_check_context
                 bson.unlock(sv_context)
