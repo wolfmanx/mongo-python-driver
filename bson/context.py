@@ -14,6 +14,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 '''Context support for BSON codec.
+
+Provides runtime (de-)activation of C extensions, per-thread
+context support, object conversion callbacks.
+
+The API is imported by the :mod:`bson` module and should be
+accessed there.
+
+When module :mod:`bson` is loaded, the default :class:`Context` is
+initialized with Python and C extension function vectors. After
+loading, the main thread context is initialized from the default
+context.
+
+The state of the BSON module after initialization corresponds to the
+default of the BSON module without the context extension. The default
+context is the active context.
+
+Thread specific context support must be be explicitely enabled with
+:func:`enable_threading`. If it is disabled with
+:func:`enable_threading`, it can no longer be re-enabled.
+
+Each new thread local context is initialized from the default context.
+
+The :func:`lock` and :func:`unlock` functions operate on the active
+context.
+
+>>> import bson
+>>> sv_context = bson.lock()
+>>> context = (
+...     bson.get_context()
+...     .enable_c(True)
+...     .addHook("__bson__", True)
+...     .addHook("__getstate__", True)
+...     )
+>>> def get_object_state(obj, need_dict):
+...     try:
+...         return (True, obj.__getstate__())
+...     except AttributeError:
+...         pass
+...     return (False, None)
+>>> context.get_object_state = get_object_state
+>>> bson.set_context(context)
+>>> bson.unlock(sv_context)
 '''
 
 import bson
@@ -33,6 +75,8 @@ class InvalidConfiguration(BSONError):
 __all__ = [
     'Context',
     'ThreadContext',
+    'dbg_check_context',
+    'dbg_check_context_required',
     'get_context',
     'set_context',
     '_update_thread_context',
@@ -82,7 +126,7 @@ class Context(object):                                     # ||:cls:||
 
         context.object_state_hooks = [('__bson__', False), ('__getstate__', True), ('__dict__', True)]
 
-    If an object attribute is found and provides the :meth:` __call__`
+    If an object attribute is found and provides the :meth:`__call__`
     interface, it is invoked as a method, otherwise the attribute
     value is used as is.
 
@@ -307,12 +351,27 @@ class ChildContext(Context):                               # ||:cls:||
         return self
 
 class ThreadContext(threading.local, ChildContext):        # ||:cls:||
+    """Thread specific context based on :class:`threading.local`."""
 
     def __init__(self):
         threading.local.__init__(self)
         ChildContext.__init__(self, True)
         # new thread local convenience lock
         self.lock = threading.RLock()
+
+# |:sec:| Context debuggging
+def dbg_check_context(context):         # |:debug:|
+    '''bson.check_context = bson.dbg_check_context'''
+    if context is None:
+        return
+    return dbg_check_context_required(context)
+
+def dbg_check_context_required(context):
+    '''bson.check_context = bson.dbg_check_context_required'''
+    if not isinstance(context, Context):
+        import traceback
+        traceback.print_stack()
+        raise TypeError('not a BSON context' + repr(context))
 
 # |:sec:| Context
 def get_context(default=False):                            # ||:fnc:||
