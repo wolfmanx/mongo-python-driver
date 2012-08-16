@@ -103,9 +103,13 @@ static struct module_state _state;
 #define STRCAT(dest, n, src) strcat((dest), (src))
 #endif
 
+#define JAVA_LEGACY   5
+#define CSHARP_LEGACY 6
+
 
 static PyObject* elements_to_dict(PyObject* self, const char* string, int max,
-                                  PyObject* as_class, unsigned char tz_aware);
+                                  PyObject* as_class, unsigned char tz_aware,
+                                  unsigned char uuid_subtype);
 
 static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byte,
                                     PyObject* value, unsigned char check_keys,
@@ -391,6 +395,19 @@ static int write_element_to_buffer(PyObject* self, buffer_t buffer, int type_byt
     return result;
 }
 
+static int _fix_java(const char* in, char* out) {
+    int i, j;
+    for (i = 0, j = 7; i < j; i++, j--) {
+        out[i] = in[j];
+        out[j] = in[i];
+    }
+    for (i = 8, j = 15; i < j; i++, j--) {
+        out[i] = in[j];
+        out[j] = in[i];
+    }
+    return 0;
+}
+
 /* TODO our platform better be little-endian w/ 4-byte ints! */
 /* Write a single value to the buffer (also write it's type_byte, for which
  * space has already been reserved.
@@ -564,13 +581,19 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
     } else if (state->UUID && PyObject_IsInstance(value, state->UUID)) {
         // Just a special case of Binary above, but simpler to do as a separate case
 
+        PyObject* bytes;
+
         // Could be bytes, bytearray, str...
         const char* binarr;
         // UUID is always 16 bytes
         int length = 16;
-        const char subtype = (const char)uuid_subtype;
-
-        PyObject* bytes;
+        char subtype;
+        if (uuid_subtype == JAVA_LEGACY || uuid_subtype == CSHARP_LEGACY) {
+            subtype = 3;
+        }
+        else {
+            subtype = (char)uuid_subtype;
+        }
 
         *(buffer_get_buffer(buffer) + type_byte) = 0x05;
         if (!buffer_write_bytes(buffer, (const char*)&length, 4)) {
@@ -580,7 +603,13 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
             return 0;
         }
 
-        bytes = PyObject_GetAttrString(value, "bytes");
+        if (uuid_subtype == CSHARP_LEGACY) {
+           /* Legacy C# byte order */
+            bytes = PyObject_GetAttrString(value, "bytes_le");
+        }
+        else {
+            bytes = PyObject_GetAttrString(value, "bytes");
+        }
         if (!bytes) {
             return 0;
         }
@@ -595,9 +624,20 @@ static int _write_element_to_buffer(PyObject* self, buffer_t buffer, int type_by
 #else
         binarr = PyString_AsString(bytes);
 #endif
-        if (!buffer_write_bytes(buffer, binarr, length)) {
-            Py_DECREF(bytes);
-            return 0;
+        if (uuid_subtype == JAVA_LEGACY) {
+            /* Store in legacy java byte order. */
+            char as_legacy_java[16];
+            _fix_java(binarr, as_legacy_java);
+            if (!buffer_write_bytes(buffer, as_legacy_java, length)) {
+                Py_DECREF(bytes);
+                return 0;
+            }
+        }
+        else {
+            if (!buffer_write_bytes(buffer, binarr, length)) {
+                Py_DECREF(bytes);
+                return 0;
+            }
         }
         Py_DECREF(bytes);
         return 1;
@@ -1205,8 +1245,9 @@ static PyObject* _cbson_dict_to_bson(PyObject* self, PyObject* args) {
     return result;
 }
 
-static PyObject* get_value(PyObject* self, const char* buffer, int* position, int type,
-                           int max, PyObject* as_class, unsigned char tz_aware) {
+static PyObject* get_value(PyObject* self, const char* buffer, int* position,
+                           int type, int max, PyObject* as_class,
+                           unsigned char tz_aware, unsigned char uuid_subtype) {
     struct module_state *state = GETSTATE(self);
 
     PyObject* value;
@@ -1248,7 +1289,8 @@ static PyObject* get_value(PyObject* self, const char* buffer, int* position, in
             if (max < size) {
                 goto invalid;
             }
-            value = elements_to_dict(self, buffer + *position + 4, size - 5, as_class, tz_aware);
+            value = elements_to_dict(self, buffer + *position + 4,
+                                     size - 5, as_class, tz_aware, uuid_subtype);
             if (!value) {
                 return NULL;
             }
@@ -1310,7 +1352,8 @@ static PyObject* get_value(PyObject* self, const char* buffer, int* position, in
                 int type = (int)buffer[(*position)++];
                 int key_size = strlen(buffer + *position);
                 *position += key_size + 1; /* just skip the key, they're in order. */
-                to_append = get_value(self, buffer, position, type, max - key_size, as_class, tz_aware);
+                to_append = get_value(self, buffer, position, type,
+                                      max - key_size, as_class, tz_aware, uuid_subtype);
                 if (!to_append) {
                     return NULL;
                 }
@@ -1324,8 +1367,7 @@ static PyObject* get_value(PyObject* self, const char* buffer, int* position, in
         {
             PyObject* data;
             PyObject* st;
-            int length,
-                subtype;
+            int length, subtype;
 
             memcpy(&length, buffer + *position, 4);
             if (max < length) {
@@ -1370,7 +1412,25 @@ static PyObject* get_value(PyObject* self, const char* buffer, int* position, in
 
                 assert(length == 16); // UUID should always be 16 bytes
 
-                PyDict_SetItemString(kwargs, "bytes", data);
+                if (uuid_subtype == CSHARP_LEGACY) {
+                    /* Legacy C# byte order */
+                    PyDict_SetItemString(kwargs, "bytes_le", data);
+                }
+                else {
+                    if (uuid_subtype == JAVA_LEGACY) {
+                        /* Convert from legacy java byte order */
+                        char big_endian[16];
+                        _fix_java(buffer + *position + 5, big_endian);
+                        /* Free the previously created PyString object */
+                        Py_DECREF(data);
+#if PY_MAJOR_VERSION >= 3
+                        data = PyBytes_FromStringAndSize(big_endian, length);
+#else
+                        data = PyString_FromStringAndSize(big_endian, length);
+#endif
+                    }
+                    PyDict_SetItemString(kwargs, "bytes", data);
+                }
                 value = PyObject_Call(state->UUID, args, kwargs);
 
                 Py_DECREF(args);
@@ -1585,7 +1645,7 @@ static PyObject* get_value(PyObject* self, const char* buffer, int* position, in
 
             memcpy(&scope_size, buffer + *position, 4);
             scope = elements_to_dict(self, buffer + *position + 4, scope_size - 5,
-                                     (PyObject*)&PyDict_Type, tz_aware);
+                                     (PyObject*)&PyDict_Type, tz_aware, uuid_subtype);
             if (!scope) {
                 Py_DECREF(code);
                 return NULL;
@@ -1673,7 +1733,8 @@ static PyObject* get_value(PyObject* self, const char* buffer, int* position, in
 }
 
 static PyObject* elements_to_dict(PyObject* self, const char* string, int max,
-                                  PyObject* as_class, unsigned char tz_aware) {
+                                  PyObject* as_class, unsigned char tz_aware,
+                                  unsigned char uuid_subtype) {
     int position = 0;
     PyObject* dict = PyObject_CallObject(as_class, NULL);
     if (!dict) {
@@ -1695,7 +1756,8 @@ static PyObject* elements_to_dict(PyObject* self, const char* string, int max,
             return NULL;
         }
         position += name_length + 1;
-        value = get_value(self, string, &position, type, max - position, as_class, tz_aware);
+        value = get_value(self, string, &position, type,
+                          max - position, as_class, tz_aware, uuid_subtype);
         if (!value) {
             return NULL;
         }
@@ -1714,11 +1776,12 @@ static PyObject* _cbson_bson_to_dict(PyObject* self, PyObject* args) {
     PyObject* bson;
     PyObject* as_class;
     unsigned char tz_aware;
+    unsigned char uuid_subtype;
     PyObject* dict;
     PyObject* remainder;
     PyObject* result;
 
-    if (!PyArg_ParseTuple(args, "OOb", &bson, &as_class, &tz_aware)) {
+    if (!PyArg_ParseTuple(args, "OObb", &bson, &as_class, &tz_aware, &uuid_subtype)) {
         return NULL;
     }
 
@@ -1770,7 +1833,7 @@ static PyObject* _cbson_bson_to_dict(PyObject* self, PyObject* args) {
         return NULL;
     }
 
-    dict = elements_to_dict(self, string + 4, size - 5, as_class, tz_aware);
+    dict = elements_to_dict(self, string + 4, size - 5, as_class, tz_aware, uuid_subtype);
     if (!dict) {
         return NULL;
     }
@@ -1798,8 +1861,9 @@ static PyObject* _cbson_decode_all(PyObject* self, PyObject* args) {
     PyObject* result;
     PyObject* as_class = (PyObject*)&PyDict_Type;
     unsigned char tz_aware = 1;
+    unsigned char uuid_subtype = 3;
 
-    if (!PyArg_ParseTuple(args, "O|Ob", &bson, &as_class, &tz_aware)) {
+    if (!PyArg_ParseTuple(args, "O|Obb", &bson, &as_class, &tz_aware, &uuid_subtype)) {
         return NULL;
     }
 
@@ -1852,7 +1916,8 @@ static PyObject* _cbson_decode_all(PyObject* self, PyObject* args) {
             return NULL;
         }
 
-        dict = elements_to_dict(self, string + 4, size - 5, as_class, tz_aware);
+        dict = elements_to_dict(self, string + 4, size - 5,
+                                as_class, tz_aware, uuid_subtype);
         if (!dict) {
             return NULL;
         }

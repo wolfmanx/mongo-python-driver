@@ -61,7 +61,9 @@ except AttributeError:
 # |||:sec:||| Dump Utilities
 # --------------------------------------------------
 
-def match_object_attribs(obj, pattern):                    # ||:fnc:||
+# (progn (forward-line 1) (snip-insert-mode "py.f.dump.object" t) (insert "\n"))
+def matching_object_attribs(obj, pattern):                 # ||:fnc:||
+    """List of object attributes matching pattern."""
     import re
     attribs = []
     for attr in dir(obj):
@@ -69,39 +71,44 @@ def match_object_attribs(obj, pattern):                    # ||:fnc:||
             attribs.append(attr)
     return attribs
 
-def dump_dict(dct, exclude=None, include=None, sorted_=None):          # ||:fnc:||
+def dump_dict(dct, exclude=None, include=None, as_is=False): # ||:fnc:||
+    fwid = (len(globals()['dbg_comm'] if 'dbg_comm' in globals() else '# ')
+            + (globals()['dbg_twid'] if 'dbg_twid' in globals() else 9)
+            + (globals()['dbg_fwid'] if 'dbg_fwid' in globals() else 15)
+            + 1)
     if exclude is None:
         exclude = list()
-    if sorted_:
-        items = sorted(ditems(dct))
-    else:
-        items = ditems(dct)
-    for attr, value in items:
+    _exclude = list(exclude)
+    ditems = dct.items()
+    if not as_is:
+        ditems = sorted(ditems)
+    for attr, value in ditems:
         if include is not None and attr not in include:
             continue
-        if attr in exclude:
+        if attr in _exclude:
             continue
-        print('{0:<25s}: {1!r}'.format(attr, value))
+        print('{1:<{0}s}: {2!r}'.format(fwid, attr, value))
 
-def dump_object(obj, exclude=None, include=None):          # ||:fnc:||
+def dump_object(obj, exclude=None, *args, **kwargs):       # ||:fnc:||
     if exclude is None:
         exclude = list()
+    kwargs['as_is'] = kwargs.get('as_is', False)
     _exclude = list(exclude)
     _exclude.extend((
         '__builtins__',
         '__doc__',
         ))
-    dump_dict(vars(obj), exclude=_exclude, include=include, sorted_=True)
+    dump_dict(vars(obj), _exclude, *args, **kwargs)
 
 def dump_bson():                                           # ||:fnc:||
     dump_object(bson,
-                exclude=match_object_attribs(bson, '^_element|^_to|^is_valid'),
-                include=match_object_attribs(bson, '(_dict|decode|^_py|^_context|_ctx|^enable|^is_)(?i)'))
+                exclude=matching_object_attribs(bson, '^_element|^_to|^is_valid'),
+                include=matching_object_attribs(bson, '(_dict|decode|^_py|^_context|_ctx|^enable|^is_)(?i)'))
 
-def dump_message():                                           # ||:fnc:||
+def dump_message():                                        # ||:fnc:||
     dump_object(pymongo.message,
-                #exclude=match_object_attribs(bson, '^_element|^_to|^is_valid'),
-                include=match_object_attribs(pymongo.message, '^(get_more|insert|query|update|^_py)(?i)')
+                #exclude=matching_object_attribs(bson, '^_element|^_to|^is_valid'),
+                include=matching_object_attribs(pymongo.message, '^(get_more|insert|query|update|^_py)(?i)')
                 )
 
 # --------------------------------------------------
@@ -297,8 +304,8 @@ if False:
         _context.setDefault('decode_all', _cbson.decode_all)
     else:
         _context.setDefault('decode_all', _py_decode_all)
-    def decode_all(data, as_class=dict, tz_aware=True):
-        return _context.decode_all(data, as_class, tz_aware)
+    def decode_all(*args, **kwargs):
+        return _context.decode_all(*args, **kwargs)
 
     # wrapper around _element_to_bson to support object_state_hooks
     _context.setDefault('_element_to_bson', _element_to_bson)
