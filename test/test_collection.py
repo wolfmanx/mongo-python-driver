@@ -186,22 +186,39 @@ class TestCollection(unittest.TestCase):
 
         db.test.drop_index("goodbye_1")
         self.assertEqual("goodbye_1",
-                         db.test.ensure_index("goodbye", ttl=1))
+                         db.test.ensure_index("goodbye", cache_for=1))
         time.sleep(1.1)
         self.assertEqual("goodbye_1",
                          db.test.ensure_index("goodbye"))
 
         db.test.drop_index("goodbye_1")
         self.assertEqual("goodbye_1",
-                         db.test.create_index("goodbye", ttl=1))
+                         db.test.create_index("goodbye", cache_for=1))
         time.sleep(1.1)
         self.assertEqual("goodbye_1",
                          db.test.ensure_index("goodbye"))
         # Make sure the expiration time is updated.
         self.assertEqual(None,
                          db.test.ensure_index("goodbye"))
+
         # Clean up indexes for later tests
         db.test.drop_indexes()
+
+    def test_deprecated_ttl_index_kwarg(self):
+        db = self.db
+
+        # In Python 2.6+ we could use the catch_warnings context
+        # manager to test this warning nicely. As we can't do that
+        # we must test raising errors before the ignore filter is applied.
+        warnings.simplefilter("error", DeprecationWarning)
+        self.assertRaises(DeprecationWarning, lambda:
+                        db.test.ensure_index("goodbye", ttl=10))
+        warnings.resetwarnings()
+        warnings.simplefilter("ignore")
+
+        self.assertEqual("goodbye_1",
+                         db.test.ensure_index("goodbye", ttl=10))
+        self.assertEqual(None, db.test.ensure_index("goodbye"))
 
     def test_ensure_unique_index_threaded(self):
         coll = self.db.test_unique_threaded
@@ -863,7 +880,7 @@ class TestCollection(unittest.TestCase):
     def test_continue_on_error(self):
         db = self.db
         if not version.at_least(db.connection, (1, 9, 1)):
-            raise SkipTest()
+            raise SkipTest("continue_on_error requires MongoDB >= 1.9.1")
 
         db.drop_collection("test")
         oid = db.test.insert({"one": 1})
@@ -949,7 +966,7 @@ class TestCollection(unittest.TestCase):
     def test_multi_update(self):
         db = self.db
         if not version.at_least(db.connection, (1, 1, 3, -1)):
-            raise SkipTest()
+            raise SkipTest("multi-update requires MongoDB >= 1.1.3")
 
         db.drop_collection("test")
 
@@ -1043,7 +1060,7 @@ class TestCollection(unittest.TestCase):
 
     def test_last_error_options(self):
         if not version.at_least(self.connection, (1, 5, 1)):
-            raise SkipTest()
+            raise SkipTest("getLastError options require MongoDB >= 1.5.1")
 
         # XXX: Fix this if we ever have a replica set unittest env.
         # mongo >=1.7.6 errors with 'norepl' when w=2+
@@ -1389,7 +1406,7 @@ class TestCollection(unittest.TestCase):
 
     def test_distinct(self):
         if not version.at_least(self.db.connection, (1, 1)):
-            raise SkipTest()
+            raise SkipTest("distinct command requires MongoDB >= 1.1")
 
         self.db.drop_collection("test")
 
@@ -1469,7 +1486,7 @@ class TestCollection(unittest.TestCase):
 
     def test_map_reduce(self):
         if not version.at_least(self.db.connection, (1, 1, 1)):
-            raise SkipTest()
+            raise SkipTest("mapReduce command requires MongoDB >= 1.1.1")
 
         db = self.db
         db.drop_collection("test")
@@ -1655,7 +1672,7 @@ class TestCollection(unittest.TestCase):
 
     def test_find_with_nested(self):
         if not version.at_least(self.db.connection, (2, 0, 0)):
-            raise SkipTest()
+            raise SkipTest("nested $and and $or requires MongoDB >= 2.0")
         c = self.db.test
         c.drop()
         c.insert([{'i': i} for i in range(5)])  # [0, 1, 2, 3, 4]
@@ -1723,7 +1740,7 @@ class TestCollection(unittest.TestCase):
 
     def test_uuid_subtype(self):
         if not have_uuid:
-            raise SkipTest()
+            raise SkipTest("No uuid module")
 
         coll = self.connection.pymongo_test.uuid
         coll.drop()
